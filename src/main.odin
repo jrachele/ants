@@ -121,6 +121,8 @@ main :: proc() {
 		rl.BeginMode2D(camera)
 		draw(state)
 		rl.EndMode2D()
+
+		draw_hud(state)
 		rl.EndDrawing()
 	}
 }

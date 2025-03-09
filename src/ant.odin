@@ -1,5 +1,6 @@
 package ants
 
+import "core:fmt"
 import "core:math"
 import "core:reflect"
 import "core:strings"
@@ -104,9 +105,6 @@ update_ants :: proc(ants: ^[dynamic]Ant) {
 	for &ant, i in ants {
 		ant.life_time += rl.GetFrameTime()
 		ant_data := AntValues[ant.type]
-		when ODIN_DEBUG {
-			ant.life_time = 0
-		}
 		if (ant.life_time < 0) do continue
 		if (ant.life_time > ant_data.average_life) {
 			ant.health -= rl.GetFrameTime()
@@ -132,6 +130,13 @@ random_walk :: proc(ant: ^Ant) {
 draw_ants :: proc(ants: []Ant) {
 	for ant in ants {
 		draw_ant(ant)
+
+		mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
+
+		ant_data := AntValues[ant.type]
+		if rl.Vector2Distance(mouse_pos, ant.pos) < ant_data.size {
+			draw_ant_data(ant)
+		}
 	}
 }
 
@@ -139,18 +144,37 @@ draw_ants :: proc(ants: []Ant) {
 draw_ant :: proc(ant: Ant) {
 	antTriangle := rotated_triangle(ant.angle)
 
-	// TODO: Draw health bar
-
-	// The ant hasn't been born yet! draw an egg instead 
 	ant_data := AntValues[ant.type]
-	type_str := reflect.enum_string(ant.type)
-	enum_type_cstr := strings.clone_to_cstring(type_str)
-	defer delete(enum_type_cstr)
+	if ant.life_time < 0 {
+		rl.DrawCircleV(ant.pos, ant_data.size, rl.WHITE)
+	} else {
+		// The ant hasn't been born yet! draw an egg instead 
+		rl.DrawTriangle(
+			expand_values(translate_triangle(antTriangle, ant.pos, ant_data.size)),
+			ant_data.color,
+		)
+	}
+}
+
+draw_ant_data :: proc(ant: Ant) {
+	sb: strings.Builder
+	strings.builder_init(&sb)
+	defer strings.builder_destroy(&sb)
+
+	ant_data := AntValues[ant.type]
+	// TODO: Draw health bar
+	if ant.life_time < 0 {
+		fmt.sbprintf(&sb, "%v (%.2fs)", ant.type, ant.life_time * -1.0)
+	} else {
+		fmt.sbprintf(&sb, "%v", ant.type)
+	}
+
+	label_str := strings.to_cstring(&sb)
 
 	// TODO: Get different font working 
 	draw_text_align(
 		rl.GetFontDefault(),
-		enum_type_cstr,
+		label_str,
 		i32(ant.pos.x),
 		i32(ant.pos.y),
 		.Center,
@@ -158,14 +182,6 @@ draw_ant :: proc(ant: Ant) {
 		rl.Color{0, 0, 0, 40},
 	)
 
-	if ant.life_time < 0 {
-		rl.DrawCircleV(ant.pos, ant_data.size, rl.WHITE)
-	} else {
-		rl.DrawTriangle(
-			expand_values(translate_triangle(antTriangle, ant.pos, ant_data.size)),
-			ant_data.color,
-		)
-	}
 }
 
 rotated_triangle :: proc(angle: f32) -> (trianglePoints: Triangle) {
