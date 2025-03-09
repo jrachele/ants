@@ -33,6 +33,7 @@ Ant :: struct {
 	life_time: f32,
 	load:      f32,
 	loadType:  EnvironmentType,
+	state:     AntState,
 }
 
 AntMetaData :: struct {
@@ -79,6 +80,15 @@ AntValues := [AntType]AntMetaData {
 		initial_health = 1000,
 	},
 	.Queen = AntMetaData{size = 30, color = rl.DARKPURPLE},
+}
+
+AntState :: enum {
+	Wander, // This is either patrol, or search
+	Danger, // Whether or not the ant engages depends on the situation
+	Forage, // Seeking wood, dirty, rocks, food, etc.
+	Build, // Building planned projects 
+	Idling, // Waiting for a second and analyzing the environment
+	ReturnHome, // Returning to the queen
 }
 
 spawn_ant :: proc(queen: Ant, ants: ^[dynamic]Ant, type: AntType = AntType.Peon) {
@@ -156,6 +166,13 @@ draw_ant :: proc(ant: Ant) {
 	}
 }
 
+draw_queen :: proc(ant: Ant) {
+	// If the queen dies, eventually a knight can take her place 
+	ant_data := AntValues[ant.type]
+
+	rl.DrawPoly(ant.pos, 7, ant_data.size, 0, ant_data.color)
+}
+
 draw_ant_data :: proc(ant: Ant) {
 	sb: strings.Builder
 	strings.builder_init(&sb)
@@ -179,7 +196,7 @@ draw_ant_data :: proc(ant: Ant) {
 		i32(ant.pos.y),
 		.Center,
 		i32(ant_data.size),
-		rl.Color{0, 0, 0, 40},
+		rl.Color{0, 0, 0, 80},
 	)
 
 }

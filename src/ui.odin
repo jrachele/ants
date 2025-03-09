@@ -22,5 +22,5 @@ draw_hud :: proc(state: GameState) {
 	}
 	counts_cstr := strings.to_cstring(&sb)
 
-	rl.DrawText(counts_cstr, 8, 8, 20, rl.BLACK)
+	rl.DrawText(counts_cstr, 8, 8, 20, rl.RAYWHITE)
 }

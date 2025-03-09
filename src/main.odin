@@ -4,6 +4,7 @@ import "base:builtin"
 import clay "clay-odin"
 import renderer "clay-renderer"
 import "core:math"
+import "core:reflect"
 import "core:slice"
 import "core:time"
 import rl "vendor:raylib"
@@ -11,18 +12,21 @@ import rl "vendor:raylib"
 WINDOW_WIDTH :: 1280
 WINDOW_HEIGHT :: 720
 
+CAMERA_MOVE_SPEED :: 400
+
 // The grid will contain aspects of the environment 
-GRID_CELL_SIZE :: 20
-Grid :: [WINDOW_HEIGHT / GRID_CELL_SIZE][WINDOW_WIDTH / GRID_CELL_SIZE]EnvironmentBlock
+GRID_CELL_SIZE :: 5
+GRID_HEIGHT :: WINDOW_HEIGHT / GRID_CELL_SIZE
+GRID_WIDTH :: WINDOW_WIDTH / GRID_CELL_SIZE
 
 EnvironmentType :: enum {
+	Nothing,
 	Grass,
 	Rock,
 	Wood,
 	Honey,
 	Dirt,
 	AntNest,
-	Nothing,
 }
 
 EnvironmentBlock :: struct {
@@ -38,7 +42,7 @@ Stage :: enum {
 
 GameState :: struct {
 	stage: Stage,
-	grid:  Grid,
+	grid:  [dynamic]EnvironmentBlock,
 	ants:  [dynamic]Ant,
 	queen: Ant,
 	timer: time.Stopwatch,
@@ -64,6 +68,7 @@ main :: proc() {
 	defer rl.CloseWindow()
 
 	grid := init_grid()
+	defer delete(grid)
 	ants: [dynamic]Ant
 	defer delete(ants)
 
@@ -95,6 +100,19 @@ main :: proc() {
 			delta := rl.GetMouseDelta()
 			delta *= -1.0 / camera.zoom
 			camera.target += delta
+		} else {
+			if (rl.IsKeyDown(.A) || rl.IsKeyDown(.LEFT)) {
+				camera.target.x -= rl.GetFrameTime() * CAMERA_MOVE_SPEED
+			}
+			if (rl.IsKeyDown(.S) || rl.IsKeyDown(.DOWN)) {
+				camera.target.y += rl.GetFrameTime() * CAMERA_MOVE_SPEED
+			}
+			if (rl.IsKeyDown(.D) || rl.IsKeyDown(.RIGHT)) {
+				camera.target.x += rl.GetFrameTime() * CAMERA_MOVE_SPEED
+			}
+			if (rl.IsKeyDown(.W) || rl.IsKeyDown(.UP)) {
+				camera.target.y -= rl.GetFrameTime() * CAMERA_MOVE_SPEED
+			}
 		}
 		// Zoom based on mouse wheel
 		wheel := rl.GetMouseWheelMove()
@@ -115,15 +133,7 @@ main :: proc() {
 			camera.zoom = clamp(camera.zoom * scaleFactor, 0.125, 64.0)
 		}
 
-		rl.ClearBackground(rl.RAYWHITE)
-		rl.BeginDrawing()
-
-		rl.BeginMode2D(camera)
 		draw(state)
-		rl.EndMode2D()
-
-		draw_hud(state)
-		rl.EndDrawing()
 	}
 }
 
@@ -151,14 +161,22 @@ start_game :: proc(state: ^GameState) {
 }
 
 draw :: proc(state: GameState) {
+	rl.BeginDrawing()
+	defer rl.EndDrawing()
+
 	switch (state.stage) {
 	case .Title:
 		draw_title()
 	case .Game:
+		rl.BeginMode2D(camera)
 		draw_game(state)
+		rl.EndMode2D()
+
+		draw_hud(state)
 	}
 }
 draw_title :: proc() {
+	rl.ClearBackground(rl.RAYWHITE)
 	draw_text_align(
 		rl.GetFontDefault(),
 		"ANTS!",
@@ -171,22 +189,64 @@ draw_title :: proc() {
 }
 
 draw_game :: proc(state: GameState) {
-	draw_grid(state.grid)
-	draw_ant(state.queen)
+	rl.ClearBackground(rl.BLACK)
+	draw_grid(state.grid[:])
+	draw_queen(state.queen)
 	draw_ants(state.ants[:])
-	// TODO: Draw hud of each ant a la Rimworld in the top left 
 }
 
-init_grid :: proc() -> (grid: Grid) {
+// TODO: Look into wave function collapse or similar for generating areas that make more sense 
+// Must add up to 100
+BlockDistribution := [EnvironmentType]i32 {
+	.Grass   = 40,
+	.Dirt    = 20,
+	.Honey   = 2,
+	.Wood    = 18,
+	.Rock    = 20,
+	.Nothing = 0,
+	.AntNest = 0,
+}
+
+select_random_block :: proc() -> EnvironmentType {
+	choice := rl.GetRandomValue(0, 100)
+	sum: i32 = 0
+	for e in EnvironmentType {
+		sum += BlockDistribution[e]
+		if choice <= sum {
+			return e
+		}
+	}
+
+	return EnvironmentType.Nothing
+}
+
+get_block :: proc(grid: []EnvironmentBlock, x: i32, y: i32) -> ^EnvironmentBlock {
+	index := int((y * GRID_WIDTH) + x)
+
+	// Probably should use actual error handling in this project
+	if index < 0 || index >= len(grid) {
+		return nil
+	}
+
+	return &grid[index]
+}
+
+init_grid :: proc() -> (grid: [dynamic]EnvironmentBlock) {
+	resize(&grid, GRID_WIDTH * GRID_HEIGHT)
+	for i in 0 ..< len(grid) {
+		grid[i].type = select_random_block()
+	}
+
 	// Create a patch of ant space at the middle of the screen 
 	// Make it occupy the middle 20%
-	center_point := [2]u8{len(grid[0]) / 2, len(grid) / 2}
-	center_size := [2]u8{len(grid[0]) / 5, len(grid) / 5}
+	center_point := [2]i32{GRID_WIDTH / 2, GRID_HEIGHT / 2}
+	center_size := [2]i32{GRID_WIDTH / 12, GRID_HEIGHT / 12}
 	for i in 0 ..< center_size.x {
 		for j in 0 ..< center_size.y {
 			x := center_point.x - (center_size.x / 2) + i
 			y := center_point.y - (center_size.y / 2) + j
-			grid[y][x].type = .AntNest
+			block := get_block(grid[:], x, y)
+			block.type = .AntNest
 		}
 	}
 
@@ -194,14 +254,12 @@ init_grid :: proc() -> (grid: Grid) {
 	return grid
 }
 
-draw_grid :: proc(grid: Grid) {
-	for row in 0 ..< len(grid) {
-		for col in 0 ..< len(grid[0]) {
-			block := grid[row][col]
+draw_grid :: proc(grid: []EnvironmentBlock) {
+	for y in 0 ..< i32(GRID_HEIGHT) {
+		for x in 0 ..< i32(GRID_WIDTH) {
+			block := get_block(grid, x, y)
 			base_color: rl.Color
 			switch (block.type) {
-			case .AntNest:
-				base_color = rl.LIGHTGRAY
 			case .Dirt:
 				base_color = rl.DARKBROWN
 			case .Honey:
@@ -213,6 +271,8 @@ draw_grid :: proc(grid: Grid) {
 			case .Wood:
 				base_color = rl.BROWN
 			case .Rock:
+				base_color = rl.DARKGRAY
+			case .AntNest:
 				base_color = rl.GRAY
 			}
 
@@ -225,8 +285,8 @@ draw_grid :: proc(grid: Grid) {
 			)
 
 			rl.DrawRectangle(
-				i32(col * GRID_CELL_SIZE),
-				i32(row * GRID_CELL_SIZE),
+				i32(x * GRID_CELL_SIZE),
+				i32(y * GRID_CELL_SIZE),
 				GRID_CELL_SIZE,
 				GRID_CELL_SIZE,
 				color,
