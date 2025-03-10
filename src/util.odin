@@ -1,5 +1,6 @@
 package ants
 
+import "core:strings"
 import rl "vendor:raylib"
 
 Text_Alignment :: enum {
@@ -17,25 +18,32 @@ get_random_value_f :: proc(min, max: f32) -> f32 {
 	return (get_random_float() * range) + min
 }
 
+get_random_vec :: proc(min, max: f32) -> rl.Vector2 {
+	return {get_random_value_f(min, max), get_random_value_f(min, max)}
+}
+
 draw_text_align :: proc(
 	font: rl.Font,
-	text: cstring,
+	text: string,
 	x: i32,
 	y: i32,
 	alignment: Text_Alignment,
 	font_size: i32,
 	color: rl.Color,
 ) {
+	text_cstr := strings.clone_to_cstring(text)
+	defer delete(text_cstr)
+
 	x := x
-	text_size := rl.MeasureText(text, font_size)
+	text_size := rl.MeasureText(text_cstr, font_size)
 	switch (alignment) {
 	case .Left:
-		x -= text_size
+	// Keep it the same
 	case .Center:
 		x -= (text_size / 2)
 	case .Right:
-	// Keep it the same
+		x -= text_size
 	}
 
-	rl.DrawText(text, x, y, font_size, color)
+	rl.DrawText(text_cstr, x, y, font_size, color)
 }

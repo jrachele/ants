@@ -21,6 +21,10 @@ draw_hud :: proc(state: GameState) {
 		fmt.sbprintfln(&sb, "%vs: %d", k, v)
 	}
 	counts_cstr := strings.to_cstring(&sb)
-
 	rl.DrawText(counts_cstr, 8, 8, 20, rl.RAYWHITE)
+
+	// Draw FPS 
+	fpsBuf: [100]u8
+	fps := fmt.bprintf(fpsBuf[:], "FPS: %v", rl.GetFPS())
+	draw_text_align(rl.GetFontDefault(), fps, WINDOW_WIDTH, 0, .Right, 20, rl.WHITE)
 }

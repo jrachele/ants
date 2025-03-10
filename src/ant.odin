@@ -4,11 +4,13 @@ import "core:fmt"
 import "core:math"
 import "core:reflect"
 import "core:strings"
+import "core:time"
 import rl "vendor:raylib"
 Triangle :: [3]rl.Vector2
 
 // In seconds,
 ANT_AVG_LIFESPAN :: 100
+ANT_PHEROMONE_RATE :: 5 // Seconds until pheromone dispense 
 
 when ODIN_DEBUG {
 	ANT_SPAWN_RATE :: 1
@@ -27,8 +29,9 @@ AntType :: enum {
 
 Ant :: struct {
 	pos:       rl.Vector2,
+	direction: rl.Vector2,
 	type:      AntType,
-	angle:     f32,
+	timer:     time.Stopwatch,
 	health:    f32,
 	life_time: f32,
 	load:      f32,
@@ -94,47 +97,103 @@ AntState :: enum {
 spawn_ant :: proc(queen: Ant, ants: ^[dynamic]Ant, type: AntType = AntType.Peon) {
 	queen_data := AntValues[.Queen]
 	ant_data := AntValues[type]
+	pos :=
+		queen.pos +
+		rl.Vector2 {
+				f32(rl.GetRandomValue(-i32(queen_data.size), i32(queen_data.size))),
+				f32(rl.GetRandomValue(-i32(queen_data.size), i32(queen_data.size))),
+			}
+
+	// Initially, the ants can go wherever
+	direction := rl.Vector2Normalize(get_random_vec(-1, 1))
+	timer: time.Stopwatch
+	time.stopwatch_start(&timer)
 	append(
 		ants,
 		Ant {
-			pos = queen.pos +
-			rl.Vector2 {
-					f32(rl.GetRandomValue(-i32(queen_data.size), i32(queen_data.size))),
-					f32(rl.GetRandomValue(-i32(queen_data.size), i32(queen_data.size))),
-				},
+			pos = pos,
 			type = type,
-			angle = get_random_value_f(-math.PI, math.PI),
+			direction = direction,
 			health = ant_data.initial_health,
 			life_time = ant_data.initial_life,
+			timer = timer,
 		},
 	)
 }
 
-update_ants :: proc(ants: ^[dynamic]Ant) {
+update_ants :: proc(state: ^GameState) {
 	// Make a decision for the ant based on its role 
-	for &ant, i in ants {
+	for &ant, i in state.ants {
 		ant.life_time += rl.GetFrameTime()
 		ant_data := AntValues[ant.type]
+		when ODIN_DEBUG {
+			ant.life_time = 0
+		}
 		if (ant.life_time < 0) do continue
 		if (ant.life_time > ant_data.average_life) {
 			ant.health -= rl.GetFrameTime()
 		}
 
 		if (ant.health < 0) {
-			ordered_remove(ants, i)
+			ordered_remove(&state.ants, i)
 			continue
 		}
 
 		// TODO: Implement behavior tree / observe environment 
+		block_index := ant.pos / GRID_CELL_SIZE
+		//neighborhood: [8]^EnvironmentBlock
+		// Read neighborhood 
+		block_most_pheromones: ^EnvironmentBlock
+		for n in -1 ..= 1 {
+			for m in -1 ..= 1 {
+				if n == 0 && m == 0 do continue
+				grid_cell_x := i32(block_index.x) + i32(m)
+				grid_cell_y := i32(block_index.y) + i32(n)
+				block := get_block(state.grid[:], grid_cell_x, grid_cell_y)
+
+				if (block != nil) {
+					if (block.pheremone_amount > 0 &&
+						   (block_most_pheromones == nil ||
+								   block.pheremone_amount >
+									   block_most_pheromones.pheremone_amount)) {
+						block_most_pheromones = block
+						ant.direction = rl.Vector2Normalize(
+							grid_cell_to_world_pos(grid_cell_x, grid_cell_y) - ant.pos,
+						)
+					}
+				}
+				//neighborhood_index := ((n + 1) * 3) + m + 1
+				//neighborhood[neighborhood_index] = block
+			}
+		}
+
+		// No suitable block found, adjust the direction slightly to offset the vibe
+		if (block_most_pheromones == nil) {
+			ant.direction = rl.Vector2Normalize(ant.direction + get_random_vec(-0.05, 0.05))
+		}
+		// Walk towards the spot with the most pheromones 
 		random_walk(&ant)
+
+		if time.stopwatch_duration(ant.timer) > ANT_PHEROMONE_RATE {
+			time.stopwatch_reset(&ant.timer)
+			time.stopwatch_start(&ant.timer)
+
+			block_index := ant.pos / GRID_CELL_SIZE
+			block := get_block(state.grid[:], i32(block_index.x), i32(block_index.y))
+			if (block != nil && block.pheremone_amount != 255) {
+				block.pheremone_amount += 1
+			}
+		}
 	}
+}
+
+grid_cell_to_world_pos :: proc(x: i32, y: i32) -> rl.Vector2 {
+	return rl.Vector2{f32(x) * GRID_CELL_SIZE, f32(y) * GRID_CELL_SIZE}
 }
 
 random_walk :: proc(ant: ^Ant) {
 	ant_data := AntValues[ant.type]
-	ant.pos +=
-		rl.Vector2{math.cos(ant.angle), -math.sin(ant.angle)} * rl.GetFrameTime() * ant_data.speed
-	ant.angle += get_random_value_f(-math.PI / 100, math.PI / 100)
+	ant.pos += ant.direction * rl.GetFrameTime() * ant_data.speed
 }
 
 draw_ants :: proc(ants: []Ant) {
@@ -152,17 +211,20 @@ draw_ants :: proc(ants: []Ant) {
 
 // For now just draw triangles 
 draw_ant :: proc(ant: Ant) {
-	antTriangle := rotated_triangle(ant.angle)
-
 	ant_data := AntValues[ant.type]
 	if ant.life_time < 0 {
+		// The ant hasn't been born yet! draw an egg instead 
 		rl.DrawCircleV(ant.pos, ant_data.size, rl.WHITE)
 	} else {
-		// The ant hasn't been born yet! draw an egg instead 
-		rl.DrawTriangle(
-			expand_values(translate_triangle(antTriangle, ant.pos, ant_data.size)),
-			ant_data.color,
-		)
+		// Lower body 
+		rl.DrawCircleV(ant.pos, ant_data.size / 2, ant_data.color)
+		// Abdomen
+		rl.DrawCircleV(ant.pos + (ant.direction / 2), ant_data.size / 4, ant_data.color)
+		// Head
+		rl.DrawCircleV(ant.pos + ant.direction, ant_data.size / 3, ant_data.color)
+	}
+
+	when ODIN_DEBUG {
 	}
 }
 
@@ -186,7 +248,7 @@ draw_ant_data :: proc(ant: Ant) {
 		fmt.sbprintf(&sb, "%v", ant.type)
 	}
 
-	label_str := strings.to_cstring(&sb)
+	label_str := strings.to_string(sb)
 
 	// TODO: Get different font working 
 	draw_text_align(
@@ -199,50 +261,4 @@ draw_ant_data :: proc(ant: Ant) {
 		rl.Color{0, 0, 0, 80},
 	)
 
-}
-
-rotated_triangle :: proc(angle: f32) -> (trianglePoints: Triangle) {
-	trianglePoints = Triangle{{0, 3}, {-1, 0}, {1, 0}}
-
-	// The actual angle used needs to be offset by 90 degrees 
-	angle := angle - (math.PI / 2)
-
-	centroid: rl.Vector2
-	for point in trianglePoints {
-		centroid += point
-	}
-	centroid /= 3.0
-
-	for &point in trianglePoints {
-		point -= centroid
-	}
-
-	cos_angle := math.cos(angle)
-	sin_angle := math.sin(angle)
-	rotatedPoints := trianglePoints
-	for point, i in trianglePoints {
-		rotatedPoints[i] =
-			{
-				(point.x * cos_angle) - (point.y * sin_angle),
-				(point.x * sin_angle) + (point.y * cos_angle),
-			} +
-			centroid
-	}
-
-	trianglePoints = rotatedPoints
-
-	return trianglePoints
-}
-
-translate_triangle :: proc(
-	trianglePoints: Triangle,
-	screenPosition: rl.Vector2,
-	scale: f32,
-) -> Triangle {
-	translatedPoints: Triangle
-	for i in 0 ..< 3 {
-		translatedPoints[i].x = (trianglePoints[i].x * scale) + screenPosition.x
-		translatedPoints[i].y = -(trianglePoints[i].y * scale) + screenPosition.y
-	}
-	return translatedPoints
 }
