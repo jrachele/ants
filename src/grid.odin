@@ -81,6 +81,7 @@ init_grid :: proc() -> (grid: [dynamic]EnvironmentBlock) {
 	resize(&grid, GRID_WIDTH * GRID_HEIGHT)
 	for i in 0 ..< len(grid) {
 		grid[i].type = select_random_block()
+		grid[i].amount = f32(rl.GetRandomValue(50, 100))
 	}
 
 	// Create a patch of ant space at the middle of the screen 
@@ -113,6 +114,8 @@ draw_grid :: proc(grid: []EnvironmentBlock) {
 				pheromone_color := get_pheromone_color(p)
 				color = rl.ColorLerp(color, pheromone_color, f32(block.pheromones[p]) / 255)
 			}
+
+			color = rl.ColorLerp(get_block_color(.Nothing), color, block.amount / 100)
 
 			switch (block.type) {
 			case .Grass, .Dirt, .Nothing, .AntNest:

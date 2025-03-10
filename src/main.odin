@@ -67,6 +67,9 @@ main :: proc() {
 	emoji_font := rl.LoadFont("assets/NotoEmoji-Regular.ttf")
 	ASSETS.fonts[.Emoji] = &emoji_font
 
+	init_hud()
+	defer deinit_hud()
+
 	camera.zoom = 1.0
 
 	for !rl.WindowShouldClose() {
@@ -131,6 +134,7 @@ update :: proc(state: ^GameState) {
 			time.stopwatch_start(&state.timer)
 		}
 		update_ants(state)
+		update_hud()
 	}
 }
 
