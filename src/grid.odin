@@ -1,7 +1,6 @@
 package ants
 
 import rl "vendor:raylib"
-import "vendor:raylib/rlgl"
 
 // The grid will contain aspects of the environment 
 GRID_CELL_SIZE :: 4
@@ -18,10 +17,17 @@ EnvironmentType :: enum {
 	AntNest,
 }
 
+Pheromone :: enum {
+	General,
+	Forage,
+	Danger,
+	Build,
+}
+
 EnvironmentBlock :: struct {
-	type:             EnvironmentType,
-	amount:           f32,
-	pheremone_amount: u8,
+	type:       EnvironmentType,
+	amount:     f32,
+	pheromones: [Pheromone]u8,
 }
 
 // TODO: Look into wave function collapse or similar for generating areas that make more sense 
@@ -50,7 +56,17 @@ select_random_block :: proc() -> EnvironmentType {
 	return EnvironmentType.Nothing
 }
 
-get_block :: proc(grid: []EnvironmentBlock, x: i32, y: i32) -> ^EnvironmentBlock {
+get_block :: proc {
+	get_block_xy,
+	get_block_v2,
+}
+
+get_block_v2 :: proc(grid: []EnvironmentBlock, v: rl.Vector2) -> ^EnvironmentBlock {
+	v := v / GRID_CELL_SIZE
+	return get_block_xy(grid, i32(v.x), i32(v.y))
+}
+
+get_block_xy :: proc(grid: []EnvironmentBlock, x: i32, y: i32) -> ^EnvironmentBlock {
 	index := int((y * GRID_WIDTH) + x)
 
 	// Probably should use actual error handling in this project
@@ -86,57 +102,84 @@ init_grid :: proc() -> (grid: [dynamic]EnvironmentBlock) {
 
 import "core:fmt"
 draw_grid :: proc(grid: []EnvironmentBlock) {
-	rlgl.SetTexture(rl.GetShapesTexture().id)
-	defer rlgl.SetTexture(0)
-
-	rlgl.SetBlendMode(i32(rlgl.BlendMode.ALPHA))
-	rlgl.Begin(rlgl.TRIANGLES)
-	defer rlgl.End()
+	rl.DrawRectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, get_block_color(.Dirt))
 
 	for y in 0 ..< i32(GRID_HEIGHT) {
 		for x in 0 ..< i32(GRID_WIDTH) {
 			block := get_block(grid, x, y)
-			base_color: rl.Color
-			switch (block.type) {
-			case .Dirt:
-				base_color = rl.DARKBROWN
-			case .Honey:
-				base_color = rl.YELLOW
-			case .Grass:
-				base_color = rl.DARKGREEN
-			case .Nothing:
-				base_color = rl.BEIGE
-			case .Wood:
-				base_color = rl.BROWN
-			case .Rock:
-				base_color = rl.DARKGRAY
-			case .AntNest:
-				base_color = rl.GRAY
+
+			color := get_block_color(block.type)
+			for p in Pheromone {
+				pheromone_color := get_pheromone_color(p)
+				color = rl.ColorLerp(color, pheromone_color, f32(block.pheromones[p]) / 255)
 			}
 
-			pheremone_color := rl.PINK
-
-			color := rl.ColorLerp(base_color, pheremone_color, f32(block.pheremone_amount) / 255)
-
-			x1 := f32(x * GRID_CELL_SIZE)
-			x2 := x1 + GRID_CELL_SIZE
-			y1 := f32(y * GRID_CELL_SIZE)
-			y2 := y1 + GRID_CELL_SIZE
-
-			topLeft := rl.Vector2{x1, y1}
-			bottomLeft := rl.Vector2{x1, y2}
-			topRight := rl.Vector2{x2, y1}
-			bottomRight := rl.Vector2{x2, y2}
-
-			rlgl.Color4ub(color.r, color.g, color.b, color.a)
-
-			rlgl.Vertex2f(topLeft.x, topLeft.y)
-			rlgl.Vertex2f(bottomLeft.x, bottomLeft.y)
-			rlgl.Vertex2f(topRight.x, topRight.y)
-
-			rlgl.Vertex2f(topRight.x, topRight.y)
-			rlgl.Vertex2f(bottomLeft.x, bottomLeft.y)
-			rlgl.Vertex2f(bottomRight.x, bottomRight.y)
+			switch (block.type) {
+			case .Grass, .Dirt, .Nothing, .AntNest:
+				rl.DrawRectangle(
+					x * GRID_CELL_SIZE,
+					y * GRID_CELL_SIZE,
+					GRID_CELL_SIZE,
+					GRID_CELL_SIZE,
+					color,
+				)
+			case .Rock, .Wood, .Honey:
+				radius: i32 = GRID_CELL_SIZE / 2
+				rl.DrawCircle(
+					(x * GRID_CELL_SIZE) + radius,
+					(y * GRID_CELL_SIZE) + radius,
+					GRID_CELL_SIZE / 2,
+					color,
+				)
+			}
 		}
 	}
+}
+
+// TODO consider using [EnvironmentType]rl.Color for this, or making a block metadata struct similar to the ants' one
+get_block_color :: proc(type: EnvironmentType) -> rl.Color {
+	switch (type) {
+	case .Nothing:
+		fallthrough
+	case .Dirt:
+		return rl.BROWN
+	case .Honey:
+		return rl.YELLOW
+	case .Grass:
+		return rl.DARKGREEN
+	case .Wood:
+		return rl.DARKBROWN
+	case .Rock:
+		return rl.DARKGRAY
+	case .AntNest:
+		return rl.GRAY
+	}
+
+	return rl.PINK
+}
+
+is_block_permeable :: proc(type: EnvironmentType) -> bool {
+	switch (type) {
+	case .Grass, .Dirt, .Nothing, .AntNest, .Honey:
+		return true
+	case .Rock, .Wood:
+		return false
+	}
+
+	return false
+}
+
+get_pheromone_color :: proc(type: Pheromone) -> rl.Color {
+	switch (type) {
+	case .General:
+		return rl.PURPLE
+	case .Forage:
+		return rl.DARKGREEN
+	case .Danger:
+		return rl.RED
+	case .Build:
+		return rl.SKYBLUE
+	}
+
+	return rl.PINK
 }

@@ -10,7 +10,8 @@ Triangle :: [3]rl.Vector2
 
 // In seconds,
 ANT_AVG_LIFESPAN :: 100
-ANT_PHEROMONE_RATE :: 5 // Seconds until pheromone dispense 
+ANT_PHEROMONE_RATE :: time.Second * 5
+ANT_IDLE_TIME :: time.Millisecond * 300
 
 when ODIN_DEBUG {
 	ANT_SPAWN_RATE :: 1
@@ -28,15 +29,18 @@ AntType :: enum {
 }
 
 Ant :: struct {
-	pos:       rl.Vector2,
-	direction: rl.Vector2,
-	type:      AntType,
-	timer:     time.Stopwatch,
-	health:    f32,
-	life_time: f32,
-	load:      f32,
-	loadType:  EnvironmentType,
-	state:     AntState,
+	pos:             rl.Vector2,
+	direction:       rl.Vector2,
+	pheromone_timer: time.Stopwatch,
+	idle_timer:      time.Stopwatch,
+	health:          f32,
+	life_time:       f32,
+	load:            f32,
+	type:            AntType,
+	seekType:        EnvironmentType,
+	loadType:        EnvironmentType,
+	state:           AntState,
+	prev_state:      AntState,
 }
 
 AntMetaData :: struct {
@@ -88,7 +92,8 @@ AntValues := [AntType]AntMetaData {
 AntState :: enum {
 	Wander, // This is either patrol, or search
 	Danger, // Whether or not the ant engages depends on the situation
-	Forage, // Seeking wood, dirty, rocks, food, etc.
+	Seek, // Seeking wood, dirty, rocks, food, etc.
+	Haul, // Actively begin hauling the resource 
 	Build, // Building planned projects 
 	Idling, // Waiting for a second and analyzing the environment
 	ReturnHome, // Returning to the queen
@@ -116,7 +121,7 @@ spawn_ant :: proc(queen: Ant, ants: ^[dynamic]Ant, type: AntType = AntType.Peon)
 			direction = direction,
 			health = ant_data.initial_health,
 			life_time = ant_data.initial_life,
-			timer = timer,
+			pheromone_timer = timer,
 		},
 	)
 }
@@ -139,52 +144,105 @@ update_ants :: proc(state: ^GameState) {
 			continue
 		}
 
-		// TODO: Implement behavior tree / observe environment 
-		block_index := ant.pos / GRID_CELL_SIZE
-		//neighborhood: [8]^EnvironmentBlock
-		// Read neighborhood 
-		block_most_pheromones: ^EnvironmentBlock
-		for n in -1 ..= 1 {
-			for m in -1 ..= 1 {
-				if n == 0 && m == 0 do continue
-				grid_cell_x := i32(block_index.x) + i32(m)
-				grid_cell_y := i32(block_index.y) + i32(n)
-				block := get_block(state.grid[:], grid_cell_x, grid_cell_y)
+		neighborhood := get_neighborhood(ant, state^)
+		l, m, r: ^EnvironmentBlock = expand_values(neighborhood)
+		// Avoid all impermeable objects 
+		if m != nil && !is_block_permeable(m.type) {
+			// The ant's gotta pause for a sec 
+			set_ant_state(&ant, .Idling)
 
-				if (block != nil) {
-					if (block.pheremone_amount > 0 &&
-						   (block_most_pheromones == nil ||
-								   block.pheremone_amount >
-									   block_most_pheromones.pheremone_amount)) {
-						block_most_pheromones = block
-						ant.direction = rl.Vector2Normalize(
-							grid_cell_to_world_pos(grid_cell_x, grid_cell_y) - ant.pos,
-						)
-					}
+			rotation_random_offset := get_random_value_f(-10, 10)
+			if l != nil && !is_block_permeable(l.type) && r != nil && !is_block_permeable(r.type) {
+				// If the entire way forward is full of rocks, rotate the entire direction 90 degrees 
+				right := bool(rl.GetRandomValue(0, 1))
+				if right {
+					ant.direction = rl.Vector2Rotate(ant.direction, 90 + rotation_random_offset)
+				} else {
+					ant.direction = rl.Vector2Rotate(ant.direction, -90 + rotation_random_offset)
 				}
-				//neighborhood_index := ((n + 1) * 3) + m + 1
-				//neighborhood[neighborhood_index] = block
+			} else if l != nil && !is_block_permeable(l.type) {
+				ant.direction = rl.Vector2Rotate(ant.direction, 30 + rotation_random_offset)
+			} else {
+				ant.direction = rl.Vector2Rotate(ant.direction, -30 + rotation_random_offset)
 			}
 		}
 
-		// No suitable block found, adjust the direction slightly to offset the vibe
-		if (block_most_pheromones == nil) {
+
+		#partial switch (ant.state) {
+		case .Seek:
+			// Actively search for valueables 
+			// TODO: Get distribution of valuables sought for from random table 
+			if ant.seekType == .Nothing {
+				ant.state = .Idling
+				break
+			}
+
+			fallthrough
+		case .Wander:
+			// Continue walking in the desired direction
 			ant.direction = rl.Vector2Normalize(ant.direction + get_random_vec(-0.05, 0.05))
+			random_walk(&ant)
+		case .Idling:
+			// Kinda spin around aimlessly.
+			ant.direction = rl.Vector2Normalize(ant.direction + get_random_vec(-0.05, 0.05))
+			if time.stopwatch_duration(ant.idle_timer) > ANT_IDLE_TIME {
+				set_ant_state(&ant, ant.prev_state)
+			}
 		}
-		// Walk towards the spot with the most pheromones 
-		random_walk(&ant)
 
-		if time.stopwatch_duration(ant.timer) > ANT_PHEROMONE_RATE {
-			time.stopwatch_reset(&ant.timer)
-			time.stopwatch_start(&ant.timer)
+		//block_index := ant.pos / GRID_CELL_SIZE
 
-			block_index := ant.pos / GRID_CELL_SIZE
-			block := get_block(state.grid[:], i32(block_index.x), i32(block_index.y))
-			if (block != nil && block.pheremone_amount != 255) {
-				block.pheremone_amount += 1
+		// Ant pheromone drop
+		if time.stopwatch_duration(ant.pheromone_timer) > ANT_PHEROMONE_RATE {
+			time.stopwatch_reset(&ant.pheromone_timer)
+			time.stopwatch_start(&ant.pheromone_timer)
+
+			block := get_block(state.grid[:], ant.pos)
+			if (block != nil && block.pheromones[.General] != 255) {
+				block.pheromones[.General] += 1
 			}
 		}
 	}
+}
+
+set_ant_state :: proc(ant: ^Ant, state: AntState) {
+	if (ant.state == state) do return
+
+	ant.prev_state = ant.state
+
+	if (state == .Idling) {
+		time.stopwatch_reset(&ant.idle_timer)
+		time.stopwatch_start(&ant.idle_timer)
+	} else {
+		time.stopwatch_reset(&ant.idle_timer)
+	}
+
+	ant.state = state
+}
+
+get_neighborhood :: proc(ant: Ant, state: GameState) -> [3]^EnvironmentBlock {
+	// Ray cast at -30 degrees, 0 degrees, and 30 degrees, from the ants direction vector 
+	left_direction := rl.Vector2Rotate(ant.direction, -30) * 0.5
+	right_direction := rl.Vector2Rotate(ant.direction, -30) * 0.5
+	middle_direction := ant.direction * 0.5
+	block_index := ant.pos / GRID_CELL_SIZE
+	ant_block := get_block(state.grid[:], ant.pos)
+
+	left_block, middle_block, right_block := ant_block, ant_block, ant_block
+
+	for left_block == ant_block {
+		left_block = get_block(state.grid[:], ant.pos + left_direction)
+		left_direction *= 2
+	}
+	for middle_block == ant_block {
+		middle_block = get_block(state.grid[:], ant.pos + middle_direction)
+		middle_direction *= 2
+	}
+	for right_block == ant_block {
+		right_block = get_block(state.grid[:], ant.pos + right_direction)
+		right_direction *= 2
+	}
+	return {left_block, middle_block, right_block}
 }
 
 grid_cell_to_world_pos :: proc(x: i32, y: i32) -> rl.Vector2 {
