@@ -13,10 +13,10 @@ ANT_PHEROMONE_RATE :: 0.5
 ANT_IDLE_TIME :: 0.300
 
 when ODIN_DEBUG {
-	// One Ant every n seconds 
-	ANT_SPAWN_RATE :: 1
+	// One Ant every n milliseconds 
+	ANT_SPAWN_RATE :: 100
 } else {
-	ANT_SPAWN_RATE :: 5
+	ANT_SPAWN_RATE :: 5000
 }
 
 AntType :: enum {
@@ -157,8 +157,14 @@ update_ants :: proc(state: ^GameState) {
 			continue
 		}
 
-		neighborhood := get_neighborhood(ant, state^)
-		l, m, r: ^EnvironmentBlock = expand_values(neighborhood)
+		neighborhood, ok := get_neighborhood(ant, state^)
+		if !ok {
+			// The ant is in an impossible state!, remove it
+			ordered_remove(&state.ants, i)
+			continue
+		}
+
+		l, m, r: EnvironmentBlock = expand_values(neighborhood)
 
 		// Always return home if the load is too large 
 		if (ant_data.carrying_capacity != 0 &&
@@ -182,9 +188,7 @@ update_ants :: proc(state: ^GameState) {
 		#partial switch (ant.state) {
 		case .ReturnHome:
 			// If you have made it back to the ants nest, begin unloading anything if you have it
-			if m != nil &&
-			   m.in_nest &&
-			   ((m.type == ant.loadType) || (is_block_permeable(m.type))) {
+			if m.in_nest && ((m.type == ant.loadType) || (is_block_permeable(m.type))) {
 				if (ant.load > 0) {
 					set_ant_state(&ant, .Unload)
 					break
@@ -193,13 +197,13 @@ update_ants :: proc(state: ^GameState) {
 
 			direction: Direction
 			most_pheromones: u8 = 0
-			if (l != nil && l.pheromones[.General] > most_pheromones) {
+			if (l.pheromones[.General] > most_pheromones) {
 				most_pheromones = l.pheromones[.General]
 				direction = .Left
-			} else if (m != nil && m.pheromones[.General] > most_pheromones) {
+			} else if (m.pheromones[.General] > most_pheromones) {
 				most_pheromones = m.pheromones[.General]
 				direction = .Forward
-			} else if (r != nil && r.pheromones[.General] > most_pheromones) {
+			} else if (r.pheromones[.General] > most_pheromones) {
 				most_pheromones = r.pheromones[.General]
 				direction = .Right
 			}
@@ -215,13 +219,13 @@ update_ants :: proc(state: ^GameState) {
 
 			found_item := false
 			// Change direction towards what is being sought 
-			if (l != nil && l.type == ant.seekType) {
+			if (l.type == ant.seekType) {
 				turn_ant(&ant, .Left)
 				found_item = true
-			} else if (r != nil && r.type == ant.seekType) {
+			} else if (r.type == ant.seekType) {
 				turn_ant(&ant, .Right)
 				found_item = true
-			} else if (m != nil && m.type == ant.seekType) {
+			} else if (m.type == ant.seekType) {
 				found_item = true
 			}
 
@@ -234,7 +238,7 @@ update_ants :: proc(state: ^GameState) {
 
 		case .Load:
 			// If the ant is hauling, it's taking whatever block is in the middle
-			if (m == nil || m.amount <= 0 || m.type == .Nothing) {
+			if (m.amount <= 0 || m.type == .Nothing) {
 				set_ant_state(&ant, .Seek)
 				break
 			}
@@ -259,9 +263,7 @@ update_ants :: proc(state: ^GameState) {
 
 			// TODO: Set amount limits on blocks 
 			front_block_valid :=
-				m != nil &&
-				m.in_nest &&
-				(m.type == ant.loadType || (m.type == .Dirt && m.amount == 0))
+				m.in_nest && (m.type == ant.loadType || (m.type == .Dirt && m.amount == 0))
 
 			// If somehow the front block is not valid (perhaps another ), return home again 
 			if !front_block_valid {
@@ -295,21 +297,23 @@ update_ants :: proc(state: ^GameState) {
 			}
 		}
 
-		// Ant pheromone drop
-		if ant.pheromone_time_remaining <= 0 {
-			block := get_block(state.grid[:], ant.pos)
-			if block != nil && block.pheromones[.General] != 255 {
-				block.pheromones[.General] += 1
-			}
+		// Ant pheromone drop if venturing
+		if ant.state == .Seek || ant.state == .Wander {
+			if ant.pheromone_time_remaining <= 0 {
+				block := get_block_ptr(&state.grid, ant.pos)
+				if block != nil && block.pheromones[.General] != 255 {
+					block.pheromones[.General] += 1
+				}
 
-			ant.pheromone_time_remaining = ANT_PHEROMONE_RATE + get_random_value_f(-0.5, 0.5)
+				ant.pheromone_time_remaining = ANT_PHEROMONE_RATE + get_random_value_f(-0.5, 0.5)
+			}
 		}
 
 		ant.pheromone_time_remaining -= rl.GetFrameTime()
 	}
 
 	// Spawn ants here 
-	if time.stopwatch_duration(state.timer) > ANT_SPAWN_RATE * time.Second {
+	if time.stopwatch_duration(state.timer) > ANT_SPAWN_RATE * time.Millisecond {
 		// TODO: Spawn more than peons
 		spawn_ant(state.queen, &state.ants)
 		time.stopwatch_reset(&state.timer)
@@ -354,51 +358,56 @@ set_ant_state :: proc(ant: ^Ant, state: AntState) {
 	ant.state = state
 }
 
-get_neighborhood :: proc(ant: Ant, state: GameState) -> [3]^EnvironmentBlock {
+get_neighborhood :: proc(ant: Ant, state: GameState) -> ([3]EnvironmentBlock, bool) {
 	// Ray cast at -30 degrees, 0 degrees, and 30 degrees, from the ants direction vector 
 	// FIXME: This is not working properly, the ants stop way far away from the obstacle 
 	left_direction := rl.Vector2Rotate(ant.direction, -30) * 0.01
 	right_direction := rl.Vector2Rotate(ant.direction, -30) * 0.01
 	middle_direction := ant.direction * 0.01
 	block_index := ant.pos / GRID_CELL_SIZE
-	ant_block := get_block(state.grid[:], ant.pos)
+	ant_block, ok := get_block(state.grid, ant.pos)
+
+	if !ok do return {}, false
 
 	left_block, middle_block, right_block := ant_block, ant_block, ant_block
 
 	for left_block == ant_block {
-		left_block = get_block(state.grid[:], ant.pos + left_direction)
+		left_block, ok = get_block(state.grid, ant.pos + left_direction)
+		if !ok do break
 		left_direction *= 2
 	}
 	for middle_block == ant_block {
-		middle_block = get_block(state.grid[:], ant.pos + middle_direction)
+		middle_block, ok = get_block(state.grid, ant.pos + middle_direction)
+		if !ok do break
 		middle_direction *= 2
 	}
 	for right_block == ant_block {
-		right_block = get_block(state.grid[:], ant.pos + right_direction)
+		right_block, ok = get_block(state.grid, ant.pos + right_direction)
+		if !ok do break
 		right_direction *= 2
 	}
-	return {left_block, middle_block, right_block}
+	return {left_block, middle_block, right_block}, true
 }
 
 grid_cell_to_world_pos :: proc(x: i32, y: i32) -> rl.Vector2 {
 	return rl.Vector2{f32(x) * GRID_CELL_SIZE, f32(y) * GRID_CELL_SIZE}
 }
 
-walk_ant :: proc(ant: ^Ant, neighborhood: [3]^EnvironmentBlock) -> bool {
+walk_ant :: proc(ant: ^Ant, neighborhood: [3]EnvironmentBlock) -> bool {
 	ant_data := AntValues[ant.type]
 	// Ensure there is nothing in the way
 	l, m, r := expand_values(neighborhood)
 	// Move forward if we're good 
-	if m == nil || is_block_permeable(m.type) {
+	if is_block_permeable(m.type) {
 		ant.pos += ant.direction * rl.GetFrameTime() * ant_data.speed
 		return true
 	}
 
 	// Otherwise make adjustments and try to walk on the next frame 
-	if l != nil && !is_block_permeable(l.type) && r != nil && !is_block_permeable(r.type) {
+	if !is_block_permeable(l.type) && !is_block_permeable(r.type) {
 		// If the entire way forward is full of rocks, rotate the entire direction 90 degrees 
 		turn_ant(ant, .Around)
-	} else if l != nil && !is_block_permeable(l.type) {
+	} else if !is_block_permeable(l.type) {
 		turn_ant(ant, .Right)
 	} else {
 		turn_ant(ant, .Left)

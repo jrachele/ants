@@ -21,7 +21,7 @@ Stage :: enum {
 
 GameState :: struct {
 	stage:  Stage,
-	grid:   [dynamic]EnvironmentBlock,
+	grid:   Grid,
 	ants:   [dynamic]Ant,
 	queen:  Ant,
 	timer:  time.Stopwatch,
@@ -42,12 +42,14 @@ ASSETS: Assets
 
 // Globals
 camera: rl.Camera2D
+grid_target: rl.RenderTexture2D
+
 main :: proc() {
 	rl.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Ants!")
 	defer rl.CloseWindow()
 
 	grid := init_grid()
-	defer delete(grid)
+	defer deinit_grid(&grid)
 	ants: [dynamic]Ant
 	defer delete(ants)
 
@@ -74,11 +76,12 @@ main :: proc() {
 
 	camera.zoom = 1.0
 
+	grid_target = rl.LoadRenderTexture(WINDOW_WIDTH, WINDOW_HEIGHT)
+	defer rl.UnloadRenderTexture(grid_target)
+
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
 		defer rl.EndDrawing()
-
-		update(&state)
 
 		// Translate based on mouse right click
 		if (rl.IsMouseButtonDown(rl.MouseButton.LEFT)) {
@@ -118,7 +121,8 @@ main :: proc() {
 			camera.zoom = clamp(camera.zoom * scaleFactor, 0.125, 64.0)
 		}
 
-		draw(state)
+		update(&state)
+		draw(&state)
 	}
 }
 
@@ -142,18 +146,17 @@ start_game :: proc(state: ^GameState) {
 	state.stage = .Game
 }
 
-draw :: proc(state: GameState) {
+draw :: proc(state: ^GameState) {
 	switch (state.stage) {
 	case .Title:
 		draw_title()
 	case .Game:
-		rl.BeginMode2D(camera)
 		draw_game(state)
-		rl.EndMode2D()
 
-		draw_hud(state)
+		draw_hud(state^)
 	}
 }
+
 draw_title :: proc() {
 	rl.ClearBackground(rl.RAYWHITE)
 	draw_text_align(
@@ -167,9 +170,22 @@ draw_title :: proc() {
 	)
 }
 
-draw_game :: proc(state: GameState) {
+draw_game :: proc(state: ^GameState) {
+	if draw_grid(state.grid) {
+		state.grid.dirty = false
+	}
+
 	rl.ClearBackground(rl.BLACK)
-	draw_grid(state.grid[:])
+	rl.BeginMode2D(camera)
+	defer rl.EndMode2D()
+	// Render the grid separately as a texture 
+	rl.DrawTextureRec(
+		grid_target.texture,
+		{0, 0, f32(grid_target.texture.width), -f32(grid_target.texture.height)},
+		{0, 0},
+		rl.WHITE,
+	)
+
 	draw_queen(state.queen)
 	draw_ants(state.ants[:])
 }

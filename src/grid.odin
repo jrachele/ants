@@ -1,5 +1,6 @@
 package ants
 
+import "core:time"
 import rl "vendor:raylib"
 
 // The grid will contain aspects of the environment 
@@ -30,6 +31,11 @@ EnvironmentBlock :: struct {
 	in_nest:    bool,
 }
 
+Grid :: struct {
+	data:  [dynamic]EnvironmentBlock,
+	dirty: bool,
+}
+
 // TODO: Look into wave function collapse or similar for generating areas that make more sense 
 // Must add up to 100
 BlockDistribution := [EnvironmentType]i32 {
@@ -55,36 +61,59 @@ select_random_block :: proc() -> EnvironmentType {
 	return EnvironmentType.Nothing
 }
 
+get_block_ptr :: proc {
+	get_block_xy_ptr,
+	get_block_v2_ptr,
+}
+
+get_block_v2_ptr :: proc(grid: ^Grid, v: rl.Vector2) -> ^EnvironmentBlock {
+	v := v / GRID_CELL_SIZE
+	return get_block_xy_ptr(grid, i32(v.x), i32(v.y))
+}
+
+get_block_xy_ptr :: proc(grid: ^Grid, x: i32, y: i32) -> ^EnvironmentBlock {
+	index := int((y * GRID_WIDTH) + x)
+
+	// Probably should use actual error handling in this project
+	if index < 0 || index >= len(grid.data) {
+		return nil
+	}
+
+	// If a block is returned as a pointer, set the grid to dirty as it will likely be mutated 
+	grid.dirty = true
+
+	return &grid.data[index]
+}
+
 get_block :: proc {
 	get_block_xy,
 	get_block_v2,
 }
 
-get_block_v2 :: proc(grid: []EnvironmentBlock, v: rl.Vector2) -> ^EnvironmentBlock {
+get_block_v2 :: proc(grid: Grid, v: rl.Vector2) -> (EnvironmentBlock, bool) {
 	v := v / GRID_CELL_SIZE
 	return get_block_xy(grid, i32(v.x), i32(v.y))
 }
 
-get_block_xy :: proc(grid: []EnvironmentBlock, x: i32, y: i32) -> ^EnvironmentBlock {
+get_block_xy :: proc(grid: Grid, x: i32, y: i32) -> (EnvironmentBlock, bool) {
 	index := int((y * GRID_WIDTH) + x)
 
-	// Probably should use actual error handling in this project
-	if index < 0 || index >= len(grid) {
-		return nil
+	if index < 0 || index >= len(grid.data) {
+		return {}, false
 	}
 
-	return &grid[index]
+	return grid.data[index], true
 }
 
-init_grid :: proc() -> (grid: [dynamic]EnvironmentBlock) {
-	resize(&grid, GRID_WIDTH * GRID_HEIGHT)
-	for i in 0 ..< len(grid) {
-		grid[i].type = select_random_block()
+init_grid :: proc() -> (grid: Grid) {
+	resize(&grid.data, GRID_WIDTH * GRID_HEIGHT)
+	for i in 0 ..< len(grid.data) {
+		grid.data[i].type = select_random_block()
 
 		// For types that can be picked up, add a random amount 
-		#partial switch (grid[i].type) {
+		#partial switch (grid.data[i].type) {
 		case .Rock, .Wood, .Honey:
-			grid[i].amount = f32(rl.GetRandomValue(1, 100))
+			grid.data[i].amount = f32(rl.GetRandomValue(1, 100))
 		}
 	}
 
@@ -96,23 +125,39 @@ init_grid :: proc() -> (grid: [dynamic]EnvironmentBlock) {
 		for j in 0 ..< center_size.y {
 			x := center_point.x - (center_size.x / 2) + i
 			y := center_point.y - (center_size.y / 2) + j
-			block := get_block(grid[:], x, y)
+			block := get_block_ptr(&grid, x, y)
 			block.type = .Dirt
 			block.in_nest = true
 		}
 	}
 
+	time.stopwatch_start(&grid_timer)
+
 	// TODO: Use wave function collapse to generate the map around the ants 
 	return grid
 }
 
+deinit_grid :: proc(grid: ^Grid) {
+	delete(grid.data)
+}
+
 import "core:fmt"
-draw_grid :: proc(grid: []EnvironmentBlock) {
+grid_timer: time.Stopwatch
+GRID_REFRESH_RATE :: 1 * time.Second
+draw_grid :: proc(grid: Grid) -> bool {
+	// Draw the grid on a timer
+	if !grid.dirty || time.stopwatch_duration(grid_timer) < GRID_REFRESH_RATE do return false
+
+	rl.BeginTextureMode(grid_target)
+	defer rl.EndTextureMode()
+
 	rl.DrawRectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, get_block_color(.Dirt))
 
+	// TODO: Figure out the bounds and only draw whats within the camera view 
 	for y in 0 ..< i32(GRID_HEIGHT) {
 		for x in 0 ..< i32(GRID_WIDTH) {
-			block := get_block(grid, x, y)
+			block, ok := get_block(grid, x, y)
+			if !ok do continue
 
 			color := get_block_color(block.type)
 			for p in Pheromone {
@@ -145,6 +190,10 @@ draw_grid :: proc(grid: []EnvironmentBlock) {
 			}
 		}
 	}
+
+	time.stopwatch_reset(&grid_timer)
+	time.stopwatch_start(&grid_timer)
+	return true
 }
 
 // TODO consider using [EnvironmentType]rl.Color for this, or making a block metadata struct similar to the ants' one
