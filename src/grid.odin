@@ -14,7 +14,6 @@ EnvironmentType :: enum {
 	Wood,
 	Honey,
 	Dirt,
-	AntNest,
 }
 
 Pheromone :: enum {
@@ -26,8 +25,9 @@ Pheromone :: enum {
 
 EnvironmentBlock :: struct {
 	type:       EnvironmentType,
-	amount:     f32,
 	pheromones: [Pheromone]u8,
+	amount:     f32,
+	in_nest:    bool,
 }
 
 // TODO: Look into wave function collapse or similar for generating areas that make more sense 
@@ -39,7 +39,6 @@ BlockDistribution := [EnvironmentType]i32 {
 	.Wood    = 18,
 	.Rock    = 20,
 	.Nothing = 0,
-	.AntNest = 0,
 }
 
 select_random_block :: proc() -> EnvironmentType {
@@ -81,7 +80,12 @@ init_grid :: proc() -> (grid: [dynamic]EnvironmentBlock) {
 	resize(&grid, GRID_WIDTH * GRID_HEIGHT)
 	for i in 0 ..< len(grid) {
 		grid[i].type = select_random_block()
-		grid[i].amount = f32(rl.GetRandomValue(50, 100))
+
+		// For types that can be picked up, add a random amount 
+		#partial switch (grid[i].type) {
+		case .Rock, .Wood, .Honey:
+			grid[i].amount = f32(rl.GetRandomValue(1, 100))
+		}
 	}
 
 	// Create a patch of ant space at the middle of the screen 
@@ -93,7 +97,8 @@ init_grid :: proc() -> (grid: [dynamic]EnvironmentBlock) {
 			x := center_point.x - (center_size.x / 2) + i
 			y := center_point.y - (center_size.y / 2) + j
 			block := get_block(grid[:], x, y)
-			block.type = .AntNest
+			block.type = .Dirt
+			block.in_nest = true
 		}
 	}
 
@@ -115,10 +120,13 @@ draw_grid :: proc(grid: []EnvironmentBlock) {
 				color = rl.ColorLerp(color, pheromone_color, f32(block.pheromones[p]) / 255)
 			}
 
-			color = rl.ColorLerp(get_block_color(.Nothing), color, block.amount / 100)
+			// Impermeable types that can be picked up should interp based on amount 
+			if (!is_block_permeable(block.type)) {
+				color = rl.ColorLerp(get_block_color(.Dirt), color, block.amount / 100)
+			}
 
 			switch (block.type) {
-			case .Grass, .Dirt, .Nothing, .AntNest:
+			case .Grass, .Dirt, .Nothing:
 				rl.DrawRectangle(
 					x * GRID_CELL_SIZE,
 					y * GRID_CELL_SIZE,
@@ -154,8 +162,6 @@ get_block_color :: proc(type: EnvironmentType) -> rl.Color {
 		return rl.DARKBROWN
 	case .Rock:
 		return rl.DARKGRAY
-	case .AntNest:
-		return rl.GRAY
 	}
 
 	return rl.PINK
@@ -163,10 +169,13 @@ get_block_color :: proc(type: EnvironmentType) -> rl.Color {
 
 is_block_permeable :: proc(type: EnvironmentType) -> bool {
 	switch (type) {
-	case .Grass, .Dirt, .Nothing, .AntNest, .Honey:
+	case .Grass, .Dirt, .Nothing:
 		return true
 	case .Rock, .Wood:
 		return false
+	case .Honey:
+		// FIXME: Set this to false after fixing neighborhood bug 
+		return true
 	}
 
 	return false

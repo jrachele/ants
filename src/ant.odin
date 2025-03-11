@@ -4,8 +4,10 @@ import "core:fmt"
 import "core:math"
 import "core:reflect"
 import "core:strings"
+import "core:time"
 import rl "vendor:raylib"
 
+ANT_LOAD_SPEED :: 2
 ANT_AVG_LIFESPAN :: 100
 ANT_PHEROMONE_RATE :: 0.5
 ANT_IDLE_TIME :: 0.300
@@ -93,11 +95,12 @@ AntValues := [AntType]AntMetaData {
 
 AntState :: enum {
 	Wander, // This is either patrol, or search
+	Idle, // Waiting for a second and analyzing the environment
 	Danger, // Whether or not the ant engages depends on the situation
 	Seek, // Seeking wood, dirty, rocks, food, etc.
-	Haul, // Actively begin hauling the resource 
+	Load, // Actively begin hauling the resource 
+	Unload, // Unloading resources
 	Build, // Building planned projects 
-	Idling, // Waiting for a second and analyzing the environment
 	ReturnHome, // Returning to the queen
 }
 
@@ -129,17 +132,17 @@ spawn_ant :: proc(queen: Ant, ants: ^[dynamic]Ant, type: AntType = AntType.Peon)
 }
 
 update_ants :: proc(state: ^GameState) {
-	// Make a decision for the ant based on its role 
 	mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
-	for &ant, i in state.ants {
-
+	for &ant in state.ants {
 		ant_data := AntValues[ant.type]
-		// FIXME: Figure out why mouse clicking is fickle, probably has to do with frame rates 
-		if rl.Vector2Distance(mouse_pos, ant.pos) < ant_data.size {
-			if rl.IsMouseButtonReleased(.LEFT) {
-				ant.selected = ~ant.selected
-			}
-		}
+		ant.selected = rl.Vector2Distance(mouse_pos, ant.pos) < ant_data.size
+	}
+
+	if state.paused do return
+
+	for &ant, i in state.ants {
+		ant_data := AntValues[ant.type]
+
 		ant.life_time += rl.GetFrameTime()
 		when ODIN_DEBUG {
 			ant.life_time = 0
@@ -162,20 +165,32 @@ update_ants :: proc(state: ^GameState) {
 			   ant.load >= ant_data.carrying_capacity &&
 			   ant.state != .ReturnHome) {
 			set_ant_state(&ant, .ReturnHome)
-			// set_ant_state(&ant, .Idling)
 		}
 
 		// Begin walking the ant if it's in any state other than idling, hauling, or building,
-		if ant.state != .Idling && ant.state != .Haul && ant.state != .Build {
+		// TODO: This needs a refactor 
+		if ant.state != .Idle &&
+		   ant.state != .Load &&
+		   ant.state != .Build &&
+		   ant.state != .Unload {
 			if !walk_ant(&ant, neighborhood) {
 				// The ant's gotta pause for a sec
-				set_ant_state(&ant, .Idling)
+				set_ant_state(&ant, .Idle)
 			}
 		}
 
-
 		#partial switch (ant.state) {
 		case .ReturnHome:
+			// If you have made it back to the ants nest, begin unloading anything if you have it
+			if m != nil &&
+			   m.in_nest &&
+			   ((m.type == ant.loadType) || (is_block_permeable(m.type))) {
+				if (ant.load > 0) {
+					set_ant_state(&ant, .Unload)
+					break
+				}
+			}
+
 			direction: Direction
 			most_pheromones: u8 = 0
 			if (l != nil && l.pheromones[.General] > most_pheromones) {
@@ -211,22 +226,22 @@ update_ants :: proc(state: ^GameState) {
 			}
 
 			if found_item {
-				set_ant_state(&ant, .Haul)
+				set_ant_state(&ant, .Load)
 				break
 			}
 
 			turn_ant(&ant, .Forward)
 
-		case .Haul:
+		case .Load:
 			// If the ant is hauling, it's taking whatever block is in the middle
 			if (m == nil || m.amount <= 0 || m.type == .Nothing) {
 				set_ant_state(&ant, .Seek)
 				break
 			}
 
-			// TODO: Have ants have different working speeds 
+			// TODO: Have ants have different loading speeds 
 			ant.loadType = m.type
-			amount := rl.GetFrameTime() * 2
+			amount := min(ANT_LOAD_SPEED * rl.GetFrameTime(), m.amount)
 			ant.load += amount
 			m.amount -= amount
 
@@ -235,11 +250,36 @@ update_ants :: proc(state: ^GameState) {
 			if (m.amount <= 0) {
 				m.type = .Nothing
 			}
+		case .Unload:
+			if (ant.load <= 0) {
+				// TODO: Have the ants new state be configurable by the player/queen
+				set_ant_state(&ant, .Wander)
+				break
+			}
 
+			// TODO: Set amount limits on blocks 
+			front_block_valid :=
+				m != nil &&
+				m.in_nest &&
+				(m.type == ant.loadType || (m.type == .Dirt && m.amount == 0))
+
+			// If somehow the front block is not valid (perhaps another ), return home again 
+			if !front_block_valid {
+				set_ant_state(&ant, .ReturnHome)
+				break
+			}
+
+			if (m.type == .Dirt) {
+				m.amount = 0
+			}
+			m.type = ant.loadType
+			amount := min(ANT_LOAD_SPEED * rl.GetFrameTime(), ant.load)
+			m.amount += amount
+			ant.load -= amount
 		case .Wander:
 			// Continue walking in the desired direction
 			turn_ant(&ant, .Forward)
-		case .Idling:
+		case .Idle:
 			// Kinda spin around aimlessly.
 			turn_ant(&ant, .Forward)
 			ant.idle_time_remaining -= rl.GetFrameTime()
@@ -247,15 +287,13 @@ update_ants :: proc(state: ^GameState) {
 			// If it's time to stop idling, make sure we can get around obstacles 
 			if (ant.idle_time_remaining <= 0) {
 				// Avoid setting the ant to its previous state if it was somehow idling 
-				if (ant.prev_state == .Idling) {
+				if (ant.prev_state == .Idle) {
 					set_ant_state(&ant, .Wander)
 				} else {
 					set_ant_state(&ant, ant.prev_state)
 				}
 			}
 		}
-
-		//block_index := ant.pos / GRID_CELL_SIZE
 
 		// Ant pheromone drop
 		if ant.pheromone_time_remaining <= 0 {
@@ -268,6 +306,14 @@ update_ants :: proc(state: ^GameState) {
 		}
 
 		ant.pheromone_time_remaining -= rl.GetFrameTime()
+	}
+
+	// Spawn ants here 
+	if time.stopwatch_duration(state.timer) > ANT_SPAWN_RATE * time.Second {
+		// TODO: Spawn more than peons
+		spawn_ant(state.queen, &state.ants)
+		time.stopwatch_reset(&state.timer)
+		time.stopwatch_start(&state.timer)
 	}
 }
 
@@ -301,7 +347,7 @@ set_ant_state :: proc(ant: ^Ant, state: AntState) {
 
 	ant.prev_state = ant.state
 
-	if (state == .Idling) {
+	if (state == .Idle) {
 		ant.idle_time_remaining = ANT_IDLE_TIME + get_random_value_f(-0.1, 0.1)
 	}
 
@@ -364,13 +410,6 @@ walk_ant :: proc(ant: ^Ant, neighborhood: [3]^EnvironmentBlock) -> bool {
 draw_ants :: proc(ants: []Ant) {
 	for ant in ants {
 		draw_ant(ant)
-
-		mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
-
-		ant_data := AntValues[ant.type]
-		if rl.Vector2Distance(mouse_pos, ant.pos) < ant_data.size {
-			draw_ant_data(ant)
-		}
 	}
 }
 

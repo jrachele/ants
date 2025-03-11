@@ -20,11 +20,12 @@ Stage :: enum {
 }
 
 GameState :: struct {
-	stage: Stage,
-	grid:  [dynamic]EnvironmentBlock,
-	ants:  [dynamic]Ant,
-	queen: Ant,
-	timer: time.Stopwatch,
+	stage:  Stage,
+	grid:   [dynamic]EnvironmentBlock,
+	ants:   [dynamic]Ant,
+	queen:  Ant,
+	timer:  time.Stopwatch,
+	paused: bool,
 }
 
 Fonts :: enum {
@@ -57,10 +58,11 @@ main :: proc() {
 	}
 
 	state := GameState {
-		stage = .Title,
-		grid  = grid,
-		ants  = ants,
-		queen = queen,
+		stage  = .Title,
+		grid   = grid,
+		ants   = ants,
+		queen  = queen,
+		paused = false,
 	}
 
 	// Load assets
@@ -127,11 +129,8 @@ update :: proc(state: ^GameState) {
 			start_game(state)
 		}
 	case .Game:
-		if time.stopwatch_duration(state.timer) > ANT_SPAWN_RATE * time.Second {
-			// Just spawn peons for now
-			spawn_ant(state.queen, &state.ants)
-			time.stopwatch_reset(&state.timer)
-			time.stopwatch_start(&state.timer)
+		if rl.IsKeyPressed(.SPACE) {
+			state.paused = ~state.paused
 		}
 		update_ants(state)
 		update_hud()

@@ -80,6 +80,7 @@ sidebar_item_component :: proc(index: u32, text: string) {
 					fontSize = 24,
 					textAlignment = .Center,
 					letterSpacing = 10,
+					wrapMode = .Newlines,
 				},
 			),
 		)
@@ -116,20 +117,20 @@ draw_clay :: proc(state: GameState) {
 		backgroundColor = {0, 0, 0, 0},
 	},
 	) {
-		if (len(ant_counts) > 0) {
-
-			if clay.UI()(
-			{
-				id = clay.ID("SideBar"),
-				layout = {
-					layoutDirection = .TopToBottom,
-					sizing = {width = clay.SizingFixed(300), height = clay.SizingFit({})},
-					padding = {16, 16, 16, 16},
-					childGap = 16,
-				},
-				backgroundColor = {230, 230, 230, 60},
+		if clay.UI()(
+		{
+			id = clay.ID("SideBar"),
+			layout = {
+				layoutDirection = .TopToBottom,
+				sizing = {width = clay.SizingFixed(300), height = clay.SizingFit({})},
+				padding = {16, 16, 16, 16},
+				childGap = 16,
 			},
-			) {
+			backgroundColor = {0, 0, 0, 0},
+		},
+		) {
+			if (len(ant_counts) > 0) {
+
 				i: u32 = 0
 				for k, v in ant_counts {
 					buf: [100]u8
@@ -144,10 +145,27 @@ draw_clay :: proc(state: GameState) {
 		if clay.UI()(
 		{
 			id = clay.ID("MainContent"),
-			layout = {sizing = {width = clay.SizingGrow({}), height = clay.SizingGrow({})}},
+			layout = {
+				sizing = {width = clay.SizingGrow({}), height = clay.SizingGrow({})},
+				childAlignment = {x = .Center},
+			},
 			backgroundColor = {0, 0, 0, 0},
 		},
-		) {}
+		) {
+			if state.paused {
+				clay.Text(
+					"PAUSED",
+					clay.TextConfig(
+						{
+							textColor = {255, 255, 255, 130},
+							fontSize = 36,
+							textAlignment = .Center,
+							letterSpacing = 10,
+						},
+					),
+				)
+			}
+		}
 
 		selected_ants: [dynamic]Ant
 		defer delete(selected_ants)
@@ -157,24 +175,24 @@ draw_clay :: proc(state: GameState) {
 			}
 		}
 
-		if len(selected_ants) > 0 {
-			if clay.UI()(
-			{
-				id = clay.ID("SideBar2"),
-				layout = {
-					layoutDirection = .TopToBottom,
-					sizing = {width = clay.SizingFixed(300), height = clay.SizingFit({})},
-					padding = {16, 16, 16, 16},
-					childGap = 16,
-				},
-				backgroundColor = {230, 230, 230, 60},
+		if clay.UI()(
+		{
+			id = clay.ID("SideBar2"),
+			layout = {
+				layoutDirection = .TopToBottom,
+				sizing = {width = clay.SizingFixed(500), height = clay.SizingFit({})},
+				padding = {16, 16, 16, 16},
+				childGap = 16,
 			},
-			) {
+			backgroundColor = {0, 0, 0, 0},
+		},
+		) {
+			if len(selected_ants) > 0 {
 				for ant, i in selected_ants {
 					buf: [1024]u8
 					info := fmt.bprintf(
 						buf[:],
-						"%v\nDoing: %v\nSeeking: %v\nLoad: %.2f (%v)\nPheromone: %.2fs\nIdle: %.2fs",
+						"%v\n%v\n->%v\nLD: %.2f (%v)\nPH:%.2fs\nID:%.2fs",
 						ant.type,
 						ant.state,
 						ant.seekType,
@@ -194,7 +212,6 @@ draw_clay :: proc(state: GameState) {
 	renderer.clayRaylibRender(&render_commands)
 }
 
-// TODO: Use clay for this 
 draw_hud :: proc(state: GameState) {
 	draw_clay(state)
 
