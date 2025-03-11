@@ -1,6 +1,5 @@
 package ants
 
-import "core:time"
 import rl "vendor:raylib"
 
 // The grid will contain aspects of the environment 
@@ -32,18 +31,20 @@ EnvironmentBlock :: struct {
 }
 
 Grid :: struct {
-	data:  [dynamic]EnvironmentBlock,
-	dirty: bool,
+	data:             [dynamic]EnvironmentBlock,
+	dirty:            bool,
+	redraw_countdown: f32,
+	selected_block:   [2]i32,
 }
 
 // TODO: Look into wave function collapse or similar for generating areas that make more sense 
 // Must add up to 100
 BlockDistribution := [EnvironmentType]i32 {
-	.Grass   = 40,
-	.Dirt    = 20,
+	.Grass   = 60,
+	.Dirt    = 28,
 	.Honey   = 2,
-	.Wood    = 18,
-	.Rock    = 20,
+	.Wood    = 5,
+	.Rock    = 5,
 	.Nothing = 0,
 }
 
@@ -96,13 +97,53 @@ get_block_v2 :: proc(grid: Grid, v: rl.Vector2) -> (EnvironmentBlock, bool) {
 }
 
 get_block_xy :: proc(grid: Grid, x: i32, y: i32) -> (EnvironmentBlock, bool) {
-	index := int((y * GRID_WIDTH) + x)
+	index := int(get_block_index(x, y))
 
-	if index < 0 || index >= len(grid.data) {
+	if !is_block_index_valid(x, y) do return {}, false
+
+	return grid.data[index], true
+}
+
+get_block_index :: proc {
+	get_block_index_v2,
+	get_block_index_xy,
+}
+
+get_block_index_xy :: proc(x: i32, y: i32) -> i32 {
+	return (y * GRID_WIDTH) + x
+}
+
+get_block_index_v2 :: proc(v: rl.Vector2) -> i32 {
+	return get_block_index_xy(i32(v.x / GRID_CELL_SIZE), i32(v.y / GRID_CELL_SIZE))
+}
+
+is_block_index_valid :: proc {
+	is_block_index_valid_i,
+	is_block_index_valid_xy,
+}
+
+is_block_index_valid_xy :: proc(x: i32, y: i32) -> bool {
+	return is_block_index_valid_i(get_block_index(x, y))
+}
+
+is_block_index_valid_i :: proc(index: i32) -> bool {
+	return index >= 0 && index < GRID_WIDTH * GRID_HEIGHT
+}
+
+get_selected_block :: proc(grid: Grid) -> (EnvironmentBlock, bool) {
+	if grid.selected_block == INVALID_BLOCK_POSITION {
 		return {}, false
 	}
 
-	return grid.data[index], true
+	return get_block(grid, grid.selected_block.x, grid.selected_block.y)
+}
+
+get_selected_block_ptr :: proc(grid: ^Grid) -> ^EnvironmentBlock {
+	if grid.selected_block == INVALID_BLOCK_POSITION {
+		return nil
+	}
+
+	return get_block_ptr(grid, grid.selected_block.x, grid.selected_block.y)
 }
 
 init_grid :: proc() -> (grid: Grid) {
@@ -131,7 +172,7 @@ init_grid :: proc() -> (grid: Grid) {
 		}
 	}
 
-	time.stopwatch_start(&grid_timer)
+	grid.selected_block = INVALID_BLOCK_POSITION
 
 	// TODO: Use wave function collapse to generate the map around the ants 
 	return grid
@@ -141,12 +182,68 @@ deinit_grid :: proc(grid: ^Grid) {
 	delete(grid.data)
 }
 
+// TODO: Implement pheromone diffusion, etc.
+update_grid :: proc(grid: ^Grid) {
+	mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
+	if (rl.IsMouseButtonPressed(.LEFT)) {
+		grid_pos := mouse_pos / GRID_CELL_SIZE
+		if i32(grid_pos.x) == grid.selected_block.x && i32(grid_pos.y) == grid.selected_block.y {
+			// Deselect
+			grid.selected_block = INVALID_BLOCK_POSITION
+		} else {
+			grid.selected_block = {i32(grid_pos.x), i32(grid_pos.y)}
+		}
+	}
+}
+
+Inventory :: [EnvironmentType]f32
+
+get_inventory :: proc(grid: Grid) -> (inventory: Inventory) {
+	for y in 0 ..< i32(GRID_HEIGHT) {
+		for x in 0 ..< i32(GRID_WIDTH) {
+			block, ok := get_block(grid, x, y)
+			if (!ok) do continue // Won't happen anyway but
+			if block.in_nest {
+				// TODO: aahhhhhhhh we should have block metadata fr fr 
+				#partial switch (block.type) {
+				case .Honey, .Wood, .Rock:
+					inventory[block.type] += block.amount
+				}
+			}
+		}
+	}
+
+	return inventory
+}
+
+// Ensure you have enough honey to deplete for this
+deplete_honey :: proc(grid: ^Grid, deplete_amount: f32) {
+	cost_remaining := deplete_amount
+	for y in 0 ..< i32(GRID_HEIGHT) {
+		for x in 0 ..< i32(GRID_WIDTH) {
+			block: ^EnvironmentBlock = get_block_ptr(grid, x, y)
+			if block != nil && block.in_nest && block.type == .Honey {
+				amount := min(cost_remaining, block.amount)
+				block.amount -= amount
+				cost_remaining -= amount
+
+				if block.amount <= 0 {
+					block.type = .Dirt
+				}
+			}
+
+			if cost_remaining <= 0 {
+				return
+			}
+		}
+	}
+}
+
 import "core:fmt"
-grid_timer: time.Stopwatch
-GRID_REFRESH_RATE :: 1 * time.Second
+GRID_REFRESH_RATE :: 1 // Second
 draw_grid :: proc(grid: Grid) -> bool {
 	// Draw the grid on a timer
-	if !grid.dirty || time.stopwatch_duration(grid_timer) < GRID_REFRESH_RATE do return false
+	if !grid.dirty || grid.redraw_countdown > 0 do return false
 
 	rl.BeginTextureMode(grid_target)
 	defer rl.EndTextureMode()
@@ -162,7 +259,8 @@ draw_grid :: proc(grid: Grid) -> bool {
 			color := get_block_color(block.type)
 			for p in Pheromone {
 				pheromone_color := get_pheromone_color(p)
-				color = rl.ColorLerp(color, pheromone_color, f32(block.pheromones[p]) / 255)
+				// TODO: Configure HUD overlays
+				color = rl.ColorLerp(color, pheromone_color, f32(block.pheromones[p]) / 1000)
 			}
 
 			// Impermeable types that can be picked up should interp based on amount 
@@ -191,8 +289,6 @@ draw_grid :: proc(grid: Grid) -> bool {
 		}
 	}
 
-	time.stopwatch_reset(&grid_timer)
-	time.stopwatch_start(&grid_timer)
 	return true
 }
 

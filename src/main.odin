@@ -136,6 +136,7 @@ update :: proc(state: ^GameState) {
 		if rl.IsKeyPressed(.SPACE) {
 			state.paused = ~state.paused
 		}
+		update_grid(&state.grid)
 		update_ants(state)
 		update_hud()
 	}
@@ -144,6 +145,13 @@ update :: proc(state: ^GameState) {
 start_game :: proc(state: ^GameState) {
 	time.stopwatch_start(&state.timer)
 	state.stage = .Game
+
+	// TODO: Set different levels, difficulties, etc. 
+
+	// For now, spawn 3 ants 
+	for _ in 0 ..< 3 {
+		spawn_ant(state.queen, &state.ants, immediately = true)
+	}
 }
 
 draw :: proc(state: ^GameState) {
@@ -173,7 +181,9 @@ draw_title :: proc() {
 draw_game :: proc(state: ^GameState) {
 	if draw_grid(state.grid) {
 		state.grid.dirty = false
+		state.grid.redraw_countdown = GRID_REFRESH_RATE
 	}
+	state.grid.redraw_countdown -= rl.GetFrameTime()
 
 	rl.ClearBackground(rl.BLACK)
 	rl.BeginMode2D(camera)
@@ -186,6 +196,21 @@ draw_game :: proc(state: ^GameState) {
 		rl.WHITE,
 	)
 
-	draw_queen(state.queen)
+	// Draw the selected block 
+	// TODO: Move this someplace appropriate
+	selected_index := state.grid.selected_block
+	rl.DrawRectangleRoundedLines(
+		{
+			f32(selected_index.x) * GRID_CELL_SIZE,
+			f32(selected_index.y) * GRID_CELL_SIZE,
+			GRID_CELL_SIZE,
+			GRID_CELL_SIZE,
+		},
+		2,
+		0,
+		rl.RAYWHITE,
+	)
+
+	draw_ant(state.queen)
 	draw_ants(state.ants[:])
 }

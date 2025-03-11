@@ -12,12 +12,8 @@ ANT_AVG_LIFESPAN :: 100
 ANT_PHEROMONE_RATE :: 0.5
 ANT_IDLE_TIME :: 0.300
 
-when ODIN_DEBUG {
-	// One Ant every n milliseconds 
-	ANT_SPAWN_RATE :: 100
-} else {
-	ANT_SPAWN_RATE :: 5000
-}
+// milliseconds
+ANT_SPAWN_RATE :: 5000
 
 AntType :: enum {
 	Peon,
@@ -51,46 +47,53 @@ AntMetaData :: struct {
 	average_life:      f32, // Average life stage until health deteriorates 
 	initial_health:    f32,
 	carrying_capacity: f32,
+	spawn_cost:        f32,
 }
+
+ANT_ALPHA :: 200
 
 AntValues := [AntType]AntMetaData {
 	.Peon = AntMetaData {
-		size = 1,
-		speed = 10,
-		color = rl.BLACK,
-		initial_life = -10,
-		average_life = 60,
-		initial_health = 5,
+		size              = 1,
+		speed             = 15,
+		color             = rl.BLACK,
+		initial_life      = -10,
+		average_life      = 60,
+		initial_health    = 5,
 		carrying_capacity = 5,
+		spawn_cost        = 0, // TODO: Maybe this should be higher ? balance idk
 	},
 	.Armored = AntMetaData {
-		size = 3,
-		speed = 3,
+		size = 2,
+		speed = 10,
 		color = rl.RED,
 		initial_life = -20,
 		average_life = 300,
 		initial_health = 100,
 		carrying_capacity = 15,
+		spawn_cost = 10,
 	},
 	.Porter = AntMetaData {
-		size = 3,
-		speed = 3,
+		size = 2,
+		speed = 15,
 		color = rl.GREEN,
 		initial_life = -20,
 		average_life = 300,
 		initial_health = 30,
 		carrying_capacity = 100,
+		spawn_cost = 10,
 	},
 	.Elite = AntMetaData {
-		size = 15,
+		size = 4,
 		speed = 10,
 		color = rl.BLUE,
 		initial_life = -50,
 		average_life = 1000,
 		initial_health = 1000,
 		carrying_capacity = 0,
+		spawn_cost = 100,
 	},
-	.Queen = AntMetaData{size = 30, color = rl.DARKPURPLE},
+	.Queen = AntMetaData{size = 20, color = rl.DARKPURPLE, spawn_cost = 1000},
 }
 
 AntState :: enum {
@@ -104,7 +107,19 @@ AntState :: enum {
 	ReturnHome, // Returning to the queen
 }
 
-spawn_ant :: proc(queen: Ant, ants: ^[dynamic]Ant, type: AntType = AntType.Peon) {
+INVALID_BLOCK_POSITION := [2]i32{-1, -1}
+
+Neighborhood :: struct {
+	blocks:         [3]EnvironmentBlock,
+	grid_positions: [3][2]i32,
+}
+
+spawn_ant :: proc(
+	queen: Ant,
+	ants: ^[dynamic]Ant,
+	type: AntType = AntType.Peon,
+	immediately: bool = false,
+) {
 	queen_data := AntValues[.Queen]
 	ant_data := AntValues[type]
 	pos :=
@@ -123,7 +138,7 @@ spawn_ant :: proc(queen: Ant, ants: ^[dynamic]Ant, type: AntType = AntType.Peon)
 			type      = type,
 			direction = direction,
 			health    = ant_data.initial_health,
-			life_time = ant_data.initial_life,
+			life_time = immediately ? 0 : ant_data.initial_life,
 			// TODO: Set default states somewhere else 
 			state     = .Seek,
 			seekType  = .Honey,
@@ -144,9 +159,9 @@ update_ants :: proc(state: ^GameState) {
 		ant_data := AntValues[ant.type]
 
 		ant.life_time += rl.GetFrameTime()
-		when ODIN_DEBUG {
-			ant.life_time = 0
-		}
+		// when ODIN_DEBUG {
+		// 	ant.life_time = 0
+		// }
 		if (ant.life_time < 0) do continue
 		if (ant.life_time > ant_data.average_life) {
 			ant.health -= rl.GetFrameTime()
@@ -164,12 +179,14 @@ update_ants :: proc(state: ^GameState) {
 			continue
 		}
 
-		l, m, r: EnvironmentBlock = expand_values(neighborhood)
+		l, m, r: EnvironmentBlock = expand_values(neighborhood.blocks)
+		lp, mp, rp: [2]i32 = expand_values(neighborhood.grid_positions)
 
 		// Always return home if the load is too large 
 		if (ant_data.carrying_capacity != 0 &&
 			   ant.load >= ant_data.carrying_capacity &&
-			   ant.state != .ReturnHome) {
+			   ant.state != .ReturnHome &&
+			   ant.state != .Unload) {
 			set_ant_state(&ant, .ReturnHome)
 		}
 
@@ -217,15 +234,21 @@ update_ants :: proc(state: ^GameState) {
 				break
 			}
 
+			// If the ant is just wandering around the nest with a little bit of a load, have them drop it off
+			if ant.load > 0 && (l.in_nest || r.in_nest || m.in_nest) {
+				set_ant_state(&ant, .Unload)
+				break
+			}
+
 			found_item := false
 			// Change direction towards what is being sought 
-			if (l.type == ant.seekType) {
+			if (l.type == ant.seekType && l.in_nest == false) {
 				turn_ant(&ant, .Left)
 				found_item = true
-			} else if (r.type == ant.seekType) {
+			} else if (r.type == ant.seekType && r.in_nest == false) {
 				turn_ant(&ant, .Right)
 				found_item = true
-			} else if (m.type == ant.seekType) {
+			} else if (m.type == ant.seekType && m.in_nest == false) {
 				found_item = true
 			}
 
@@ -245,19 +268,23 @@ update_ants :: proc(state: ^GameState) {
 
 			// TODO: Have ants have different loading speeds 
 			ant.loadType = m.type
-			amount := min(ANT_LOAD_SPEED * rl.GetFrameTime(), m.amount)
+
+			// Get a mutable m block as we need to modify the grid
+			m_mut := get_block_ptr(&state.grid, mp.x, mp.y)
+			amount := min(ANT_LOAD_SPEED * rl.GetFrameTime(), m_mut.amount)
 			ant.load += amount
-			m.amount -= amount
+			m_mut.amount -= amount
 
 			// Set the block to nothing 
 			// TODO: Probably move this to an update_grid() function along with pheromone diffusion 
-			if (m.amount <= 0) {
-				m.type = .Nothing
+			if (m_mut.amount <= 0) {
+				m_mut.type = .Nothing
 			}
+
 		case .Unload:
 			if (ant.load <= 0) {
 				// TODO: Have the ants new state be configurable by the player/queen
-				set_ant_state(&ant, .Wander)
+				set_ant_state(&ant, .Seek)
 				break
 			}
 
@@ -271,12 +298,14 @@ update_ants :: proc(state: ^GameState) {
 				break
 			}
 
+			// Get a mutable m block as we need to modify the grid
+			m_mut := get_block_ptr(&state.grid, mp.x, mp.y)
 			if (m.type == .Dirt) {
-				m.amount = 0
+				m_mut.amount = 0
 			}
-			m.type = ant.loadType
+			m_mut.type = ant.loadType
 			amount := min(ANT_LOAD_SPEED * rl.GetFrameTime(), ant.load)
-			m.amount += amount
+			m_mut.amount += amount
 			ant.load -= amount
 		case .Wander:
 			// Continue walking in the desired direction
@@ -313,9 +342,30 @@ update_ants :: proc(state: ^GameState) {
 	}
 
 	// Spawn ants here 
+	// TODO: Remove the spawn timer and make something more flexible 
 	if time.stopwatch_duration(state.timer) > ANT_SPAWN_RATE * time.Millisecond {
-		// TODO: Spawn more than peons
-		spawn_ant(state.queen, &state.ants)
+		inventory := get_inventory(state.grid)
+
+		possible_spawn := -1 // 0 -> peon
+		for type in AntType {
+			ant_data := AntValues[type]
+			if inventory[.Honey] >= ant_data.spawn_cost {
+				possible_spawn += 1
+			}
+		}
+
+		if possible_spawn == -1 {
+			// Queen cant birth any more ants 
+			return
+		}
+
+		random_type := rl.GetRandomValue(0, i32(possible_spawn))
+		spawn_type := AntType(random_type)
+
+		// TODO: Refactor the inventory system to avoid so much iteration
+		deplete_honey(&state.grid, AntValues[spawn_type].spawn_cost)
+		spawn_ant(state.queen, &state.ants, spawn_type)
+
 		time.stopwatch_reset(&state.timer)
 		time.stopwatch_start(&state.timer)
 	}
@@ -328,7 +378,7 @@ Direction :: enum {
 	Around,
 }
 turn_ant :: proc(ant: ^Ant, direction: Direction) {
-	rotation_random_offset := get_random_value_f(-0.25, 0.25)
+	rotation_random_offset := get_random_value_f(-0.1, 0.1)
 	switch (direction) {
 	case .Left:
 		ant.direction = rl.Vector2Rotate(ant.direction, -30 + rotation_random_offset)
@@ -358,45 +408,48 @@ set_ant_state :: proc(ant: ^Ant, state: AntState) {
 	ant.state = state
 }
 
-get_neighborhood :: proc(ant: Ant, state: GameState) -> ([3]EnvironmentBlock, bool) {
+get_neighborhood :: proc(ant: Ant, state: GameState) -> (Neighborhood, bool) {
 	// Ray cast at -30 degrees, 0 degrees, and 30 degrees, from the ants direction vector 
-	// FIXME: This is not working properly, the ants stop way far away from the obstacle 
-	left_direction := rl.Vector2Rotate(ant.direction, -30) * 0.01
-	right_direction := rl.Vector2Rotate(ant.direction, -30) * 0.01
-	middle_direction := ant.direction * 0.01
-	block_index := ant.pos / GRID_CELL_SIZE
-	ant_block, ok := get_block(state.grid, ant.pos)
-
-	if !ok do return {}, false
-
-	left_block, middle_block, right_block := ant_block, ant_block, ant_block
-
-	for left_block == ant_block {
-		left_block, ok = get_block(state.grid, ant.pos + left_direction)
-		if !ok do break
-		left_direction *= 2
+	directions := [3]rl.Vector2 {
+		rl.Vector2Rotate(ant.direction, -30), // Left
+		ant.direction, // Middle
+		rl.Vector2Rotate(ant.direction, -30), // Right
 	}
-	for middle_block == ant_block {
-		middle_block, ok = get_block(state.grid, ant.pos + middle_direction)
-		if !ok do break
-		middle_direction *= 2
+	block_index := get_block_index(ant.pos)
+
+	// FIXME: Issues with this 
+	MAX_RAYCASTS :: 6
+	RAY_INCREMENT :: GRID_CELL_SIZE / 6.0
+
+	neighborhood: Neighborhood
+	for i in 0 ..< 3 {
+		neighborhood.grid_positions[i] = INVALID_BLOCK_POSITION
+		for inc in 0 ..< MAX_RAYCASTS {
+			inc := f32(inc)
+			ray_position := ant.pos + (directions[i] * RAY_INCREMENT * inc)
+			ray_index := get_block_index(ray_position)
+			if ray_index != block_index {
+				block, ok := get_block(state.grid, ray_position)
+				if !ok do break
+				neighborhood.grid_positions[i].x = i32(ray_position.x / GRID_CELL_SIZE)
+				neighborhood.grid_positions[i].y = i32(ray_position.y / GRID_CELL_SIZE)
+				neighborhood.blocks[i] = block
+				break
+			}
+		}
 	}
-	for right_block == ant_block {
-		right_block, ok = get_block(state.grid, ant.pos + right_direction)
-		if !ok do break
-		right_direction *= 2
-	}
-	return {left_block, middle_block, right_block}, true
+
+	return neighborhood, true
 }
 
 grid_cell_to_world_pos :: proc(x: i32, y: i32) -> rl.Vector2 {
 	return rl.Vector2{f32(x) * GRID_CELL_SIZE, f32(y) * GRID_CELL_SIZE}
 }
 
-walk_ant :: proc(ant: ^Ant, neighborhood: [3]EnvironmentBlock) -> bool {
+walk_ant :: proc(ant: ^Ant, neighborhood: Neighborhood) -> bool {
 	ant_data := AntValues[ant.type]
 	// Ensure there is nothing in the way
-	l, m, r := expand_values(neighborhood)
+	l, m, r := expand_values(neighborhood.blocks)
 	// Move forward if we're good 
 	if is_block_permeable(m.type) {
 		ant.pos += ant.direction * rl.GetFrameTime() * ant_data.speed
@@ -429,31 +482,43 @@ draw_ant :: proc(ant: Ant) {
 		rl.DrawCircleLinesV(ant.pos, ant_data.size, rl.WHITE)
 	}
 
+	ant_color := ant_data.color
+	ant_color.a = ANT_ALPHA
+
 	if ant.life_time < 0 {
 		// The ant hasn't been born yet! draw an egg instead 
 		rl.DrawCircleV(ant.pos, ant_data.size, rl.WHITE)
+		buf: [100]u8
+		time := fmt.bprintf(buf[:], "%.fs", -ant.life_time)
+		label_pos := ant.pos + {0, -ant_data.size}
+		draw_text_align(
+			rl.GetFontDefault(),
+			time,
+			i32(label_pos.x),
+			i32(label_pos.y),
+			.Center,
+			5,
+			{0, 0, 0, 100},
+		)
 	} else {
 		// Lower body 
-		rl.DrawCircleV(ant.pos, ant_data.size / 2, ant_data.color)
+		rl.DrawCircleV(ant.pos, ant_data.size / 2, ant_color)
 		// Abdomen
-		rl.DrawCircleV(ant.pos + (ant.direction / 2), ant_data.size / 4, ant_data.color)
+		rl.DrawCircleV(ant.pos + (ant_data.size * ant.direction / 2), ant_data.size / 4, ant_color)
 		// Head
-		rl.DrawCircleV(ant.pos + ant.direction, ant_data.size / 3, ant_data.color)
+		rl.DrawCircleV(ant.pos + (ant_data.size * ant.direction), ant_data.size / 3, ant_color)
 
 		// Load if any
 		if (ant.load > 0) {
 			block_color := get_block_color(ant.loadType)
-			rl.DrawCircleV(ant.pos + (ant.direction * 2), ant_data.size / 4, block_color)
+			rl.DrawCircleV(
+				ant.pos + (ant_data.size * ant.direction * 2),
+				ant_data.size / 4,
+				block_color,
+			)
 		}
 	}
 
-}
-
-draw_queen :: proc(ant: Ant) {
-	// If the queen dies, eventually a knight can take her place 
-	ant_data := AntValues[ant.type]
-
-	rl.DrawPoly(ant.pos, 7, ant_data.size, 0, ant_data.color)
 }
 
 draw_ant_data :: proc(ant: Ant) {
