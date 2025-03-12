@@ -205,9 +205,9 @@ draw_clay :: proc(state: GameState) {
 						"%v\n%v\n->%v\nLD: %.2f (%v)\nPH:%.2fs\nID:%.2fs",
 						ant.type,
 						ant.state,
-						ant.seekType,
+						ant.seek_type,
 						ant.load,
-						ant.loadType,
+						ant.load_type,
 						ant.pheromone_time_remaining,
 						ant.idle_time_remaining,
 					)

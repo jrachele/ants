@@ -260,7 +260,7 @@ draw_grid :: proc(grid: Grid) -> bool {
 			for p in Pheromone {
 				pheromone_color := get_pheromone_color(p)
 				// TODO: Configure HUD overlays
-				color = rl.ColorLerp(color, pheromone_color, f32(block.pheromones[p]) / 1000)
+				color = rl.ColorLerp(color, pheromone_color, f32(block.pheromones[p]) / 500)
 			}
 
 			// Impermeable types that can be picked up should interp based on amount 
@@ -319,8 +319,7 @@ is_block_permeable :: proc(type: EnvironmentType) -> bool {
 	case .Rock, .Wood:
 		return false
 	case .Honey:
-		// FIXME: Set this to false after fixing neighborhood bug 
-		return true
+		return false
 	}
 
 	return false

@@ -23,7 +23,7 @@ GameState :: struct {
 	stage:  Stage,
 	grid:   Grid,
 	ants:   [dynamic]Ant,
-	queen:  Ant,
+	queen:  Queen,
 	timer:  time.Stopwatch,
 	paused: bool,
 }
@@ -53,17 +53,11 @@ main :: proc() {
 	ants: [dynamic]Ant
 	defer delete(ants)
 
-	queen := Ant {
-		health = 100,
-		type   = .Queen,
-		pos    = {WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2},
-	}
 
 	state := GameState {
 		stage  = .Title,
 		grid   = grid,
 		ants   = ants,
-		queen  = queen,
 		paused = false,
 	}
 
@@ -150,7 +144,7 @@ start_game :: proc(state: ^GameState) {
 
 	// For now, spawn 3 ants 
 	for _ in 0 ..< 3 {
-		spawn_ant(state.queen, &state.ants, immediately = true)
+		spawn_ant(state, immediately = true)
 	}
 }
 
@@ -211,6 +205,6 @@ draw_game :: proc(state: ^GameState) {
 		rl.RAYWHITE,
 	)
 
-	draw_ant(state.queen)
+	draw_queen()
 	draw_ants(state.ants[:])
 }

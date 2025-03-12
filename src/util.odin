@@ -47,3 +47,13 @@ draw_text_align :: proc(
 
 	rl.DrawText(text_cstr, x, y, font_size, color)
 }
+
+
+random_select :: proc(possible_values: []$T) -> T {
+	if len(possible_values) == 0 {
+		panic("Random select on empty possible values")
+	}
+
+	index := rl.GetRandomValue(0, i32(len(possible_values) - 1))
+	return possible_values[index]
+}
