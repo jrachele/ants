@@ -27,7 +27,6 @@ EnvironmentBlock :: struct {
 	type:       EnvironmentType,
 	pheromones: [Pheromone]u8,
 	amount:     f32,
-	in_nest:    bool,
 }
 
 Grid :: struct {
@@ -158,21 +157,8 @@ init_grid :: proc() -> (grid: Grid) {
 		}
 	}
 
-	// Create a patch of ant space at the middle of the screen 
-	// Make it occupy the middle 20%
-	center_point := [2]i32{GRID_WIDTH / 2, GRID_HEIGHT / 2}
-	center_size := [2]i32{GRID_WIDTH / 12, GRID_HEIGHT / 12}
-	for i in 0 ..< center_size.x {
-		for j in 0 ..< center_size.y {
-			x := center_point.x - (center_size.x / 2) + i
-			y := center_point.y - (center_size.y / 2) + j
-			block := get_block_ptr(&grid, x, y)
-			block.type = .Dirt
-			block.in_nest = true
-		}
-	}
-
 	grid.selected_block = INVALID_BLOCK_POSITION
+	grid.dirty = true
 
 	// TODO: Use wave function collapse to generate the map around the ants 
 	return grid
@@ -194,49 +180,8 @@ update_grid :: proc(grid: ^Grid) {
 			grid.selected_block = {i32(grid_pos.x), i32(grid_pos.y)}
 		}
 	}
-}
 
-Inventory :: [EnvironmentType]f32
-
-get_inventory :: proc(grid: Grid) -> (inventory: Inventory) {
-	for y in 0 ..< i32(GRID_HEIGHT) {
-		for x in 0 ..< i32(GRID_WIDTH) {
-			block, ok := get_block(grid, x, y)
-			if (!ok) do continue // Won't happen anyway but
-			if block.in_nest {
-				// TODO: aahhhhhhhh we should have block metadata fr fr 
-				#partial switch (block.type) {
-				case .Honey, .Wood, .Rock:
-					inventory[block.type] += block.amount
-				}
-			}
-		}
-	}
-
-	return inventory
-}
-
-// Ensure you have enough honey to deplete for this
-deplete_honey :: proc(grid: ^Grid, deplete_amount: f32) {
-	cost_remaining := deplete_amount
-	for y in 0 ..< i32(GRID_HEIGHT) {
-		for x in 0 ..< i32(GRID_WIDTH) {
-			block: ^EnvironmentBlock = get_block_ptr(grid, x, y)
-			if block != nil && block.in_nest && block.type == .Honey {
-				amount := min(cost_remaining, block.amount)
-				block.amount -= amount
-				cost_remaining -= amount
-
-				if block.amount <= 0 {
-					block.type = .Dirt
-				}
-			}
-
-			if cost_remaining <= 0 {
-				return
-			}
-		}
-	}
+	grid.redraw_countdown -= rl.GetFrameTime()
 }
 
 import "core:fmt"

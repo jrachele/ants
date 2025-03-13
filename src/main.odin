@@ -23,7 +23,7 @@ GameState :: struct {
 	stage:  Stage,
 	grid:   Grid,
 	ants:   [dynamic]Ant,
-	queen:  Queen,
+	nest:   Nest,
 	timer:  time.Stopwatch,
 	paused: bool,
 }
@@ -53,10 +53,13 @@ main :: proc() {
 	ants: [dynamic]Ant
 	defer delete(ants)
 
+	nest := init_nest()
+
 
 	state := GameState {
 		stage  = .Title,
 		grid   = grid,
+		nest   = nest,
 		ants   = ants,
 		paused = false,
 	}
@@ -205,6 +208,6 @@ draw_game :: proc(state: ^GameState) {
 		rl.RAYWHITE,
 	)
 
-	draw_queen()
 	draw_ants(state.ants[:])
+	draw_nest()
 }

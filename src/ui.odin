@@ -96,7 +96,7 @@ draw_clay :: proc(state: GameState) {
 		ant_counts[ant.type] += 1
 	}
 
-	inventory := get_inventory(state.grid)
+	inventory := state.nest.inventory
 
 	CLAY_ARENA_SIZE :: 4196
 	render_buf := make([]u8, CLAY_ARENA_SIZE)
@@ -202,14 +202,12 @@ draw_clay :: proc(state: GameState) {
 				if len(selected_ants) > 0 {
 					ant := selected_ants[0]
 					info := fmt.aprintfln(
-						"%v\n%v\n->%v\nLD: %.2f (%v)\nPH:%.2fs\nID:%.2fs",
+						"%v\n%v\nLD: %.2f (%v)\nPH:%.2fs\n",
 						ant.type,
 						ant.state,
-						ant.seek_type,
 						ant.load,
 						ant.load_type,
 						ant.pheromone_time_remaining,
-						ant.idle_time_remaining,
 					)
 					sidebar_item_component(u32(len(ant_counts)), info)
 				}
@@ -220,12 +218,7 @@ draw_clay :: proc(state: GameState) {
 						return
 					}
 
-					info := fmt.aprintfln(
-						"%v\n%.2f\nnest: %v",
-						block.type,
-						block.amount,
-						block.in_nest,
-					)
+					info := fmt.aprintfln("%v\n%.2f", block.type, block.amount)
 					// TODO: Refactor this, God
 					sidebar_item_component(1000, info)
 				}
