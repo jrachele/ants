@@ -1,5 +1,6 @@
 package ants
 
+import "core:fmt"
 import rl "vendor:raylib"
 
 // The grid will contain aspects of the environment 
@@ -30,10 +31,11 @@ EnvironmentBlock :: struct {
 }
 
 Grid :: struct {
-	data:             [dynamic]EnvironmentBlock,
-	dirty:            bool,
-	redraw_countdown: f32,
-	selected_block:   [2]i32,
+	data:                          [dynamic]EnvironmentBlock,
+	dirty:                         bool,
+	redraw_countdown:              f32,
+	pheromone_diffusion_countdown: f32,
+	selected_block:                [2]i32,
 }
 
 // TODO: Look into wave function collapse or similar for generating areas that make more sense 
@@ -88,6 +90,7 @@ get_block_xy_ptr :: proc(grid: ^Grid, x: i32, y: i32) -> ^EnvironmentBlock {
 get_block :: proc {
 	get_block_xy,
 	get_block_v2,
+	get_block_i,
 }
 
 get_block_v2 :: proc(grid: Grid, v: rl.Vector2) -> (EnvironmentBlock, bool) {
@@ -97,10 +100,12 @@ get_block_v2 :: proc(grid: Grid, v: rl.Vector2) -> (EnvironmentBlock, bool) {
 
 get_block_xy :: proc(grid: Grid, x: i32, y: i32) -> (EnvironmentBlock, bool) {
 	index := int(get_block_index(x, y))
+	return get_block_i(grid, index)
+}
 
-	if !is_block_index_valid(x, y) do return {}, false
-
-	return grid.data[index], true
+get_block_i :: proc(grid: Grid, i: int) -> (EnvironmentBlock, bool) {
+	if i < 0 || i >= len(grid.data) do return {}, false
+	return grid.data[i], true
 }
 
 get_block_index :: proc {
@@ -127,6 +132,10 @@ is_block_index_valid_xy :: proc(x: i32, y: i32) -> bool {
 
 is_block_index_valid_i :: proc(index: i32) -> bool {
 	return index >= 0 && index < GRID_WIDTH * GRID_HEIGHT
+}
+
+grid_cell_to_world_pos :: proc(x: i32, y: i32) -> rl.Vector2 {
+	return rl.Vector2{f32(x) * GRID_CELL_SIZE, f32(y) * GRID_CELL_SIZE}
 }
 
 get_selected_block :: proc(grid: Grid) -> (EnvironmentBlock, bool) {
@@ -168,7 +177,6 @@ deinit_grid :: proc(grid: ^Grid) {
 	delete(grid.data)
 }
 
-// TODO: Implement pheromone diffusion, etc.
 update_grid :: proc(grid: ^Grid) {
 	mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
 	if (rl.IsMouseButtonPressed(.LEFT)) {
@@ -181,11 +189,46 @@ update_grid :: proc(grid: ^Grid) {
 		}
 	}
 
+	diffused_pheromones := false
+	for i in 0 ..< len(grid.data) {
+		// Set the block to nothing if the amount is 0
+		block := &grid.data[i]
+		if block.amount <= 0 && is_block_collectable(block.type) {
+			block.type = .Nothing
+			grid.dirty = true
+		}
+
+		if grid.pheromone_diffusion_countdown < 0 {
+			// TODO: diffuse pheromones
+			diffused_pheromones = true
+		}
+	}
+
+	// Reset the pheromone diffusion timer 
+	if diffused_pheromones {
+		grid.pheromone_diffusion_countdown = PHEROMONE_DIFFUSION_RATE
+	}
+
 	grid.redraw_countdown -= rl.GetFrameTime()
+	grid.pheromone_diffusion_countdown -= rl.GetFrameTime()
+
 }
 
-import "core:fmt"
+is_block_collectable :: proc(type: EnvironmentType) -> bool {
+	switch type {
+	case .Dirt, .Grass, .Nothing:
+		return false
+	case .Honey, .Rock, .Wood:
+		return true
+	}
+	return true
+}
+
 GRID_REFRESH_RATE :: 1 // Second
+PHEROMONE_DIFFUSION_RATE :: 3 // Second
+// Each tick of the diffusion, set the current block to this amount and set the <=8 surrounding blocks to 1/8 * 100 - n
+PHEROMONE_DIFFUSION_STATIS_NUMBER :: 90
+
 draw_grid :: proc(grid: Grid) -> bool {
 	// Draw the grid on a timer
 	if !grid.dirty || grid.redraw_countdown > 0 do return false

@@ -134,37 +134,40 @@ AntState :: union {
 
 INVALID_BLOCK_POSITION := [2]i32{-1, -1}
 
-Neighborhood :: struct {
-	blocks:         [3]EnvironmentBlock,
-	grid_positions: [3][2]i32,
+// Store a set of block indices 
+Neighborhood :: map[i32]struct {}
+
+init_ant :: proc(type: AntType, nest: Nest, allocator := context.allocator) -> (ant: Ant) {
+	ant_data := AntValues[type]
+	ant.pos = NEST_POS
+	// Initially, the ants can go wherever
+	ant.direction = rl.Vector2Normalize(get_random_vec(-1, 1))
+	ant.type = type
+	ant.health = ant_data.initial_health
+	ant.life_time = ant_data.initial_life
+	ant.state = ant_state_from_nest(nest)
+	return
 }
 
-spawn_ant :: proc(state: ^GameState, type: AntType = AntType.Peon, immediately: bool = false) {
-	ant_data := AntValues[type]
-	pos := NEST_POS
+spawn_ant :: proc(
+	state: ^GameState,
+	type: AntType = AntType.Peon,
+	immediately: bool = false,
+	allocator := context.allocator,
+) {
+	ant := init_ant(type, state.nest, allocator)
+	if immediately {
+		ant.life_time = 0
+	}
 
-	// Initially, the ants can go wherever
-	direction := rl.Vector2Normalize(get_random_vec(-1, 1))
-
-	ant_state := ant_state_from_nest(state.nest)
-
-	append(
-		&state.ants,
-		Ant {
-			pos = pos,
-			type = type,
-			direction = direction,
-			health = ant_data.initial_health,
-			life_time = immediately ? 0 : ant_data.initial_life,
-			state = ant_state,
-		},
-	)
+	append(&state.ants, ant)
 }
 
 update_ants :: proc(state: ^GameState) {
 	mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
 	for &ant in state.ants {
 		ant_data := AntValues[ant.type]
+		if ant.life_time < 0 do continue
 		ant.selected = rl.Vector2Distance(mouse_pos, ant.pos) < ant_data.size
 	}
 
@@ -184,22 +187,21 @@ update_ants :: proc(state: ^GameState) {
 			continue
 		}
 
-		neighborhood, ok := get_neighborhood(ant, state^)
-		if !ok {
+		neighborhood := get_neighborhood(ant, state^)
+		defer delete(neighborhood)
+
+		if len(neighborhood) == 0 {
 			// The ant is in an impossible state!, remove it
 			ordered_remove(&state.ants, i)
 			continue
 		}
-
-		l, m, r: EnvironmentBlock = expand_values(neighborhood.blocks)
-		lp, mp, rp: [2]i32 = expand_values(neighborhood.grid_positions)
 
 		// Pre-move the ant then run through the states
 		switch (reflect.union_variant_typeid(ant.state)) {
 		case AntState_Build, AntState_Idle, AntState_Load, AntState_Unload:
 		// Do not pre-move here 
 		case:
-			if !walk_ant(&ant, neighborhood) {
+			if !walk_ant(&ant, state.grid) {
 				// The ant's gotta pause for a sec
 				set_ant_state(&ant, AntState_Idle{})
 			}
@@ -226,8 +228,7 @@ update_ants :: proc(state: ^GameState) {
 				try_spread_pheromone(&ant, &state.grid, .Forage)
 			}
 
-			// TODO: Improve radius for neighborhood 
-			seek_pheromones(&ant, neighborhood, .General)
+			seek_pheromones(&ant, neighborhood, state.grid, .General)
 
 		case AntState_Seek:
 			// Actively search for valueables 
@@ -236,46 +237,35 @@ update_ants :: proc(state: ^GameState) {
 				break
 			}
 
-			found_item := false
-			// Change direction towards what is being sought 
-			if l.type == ant_state.seek_type {
-				turn_ant(&ant, .Left)
-				found_item = true
-			} else if r.type == ant_state.seek_type {
-				turn_ant(&ant, .Right)
-				found_item = true
-			} else if m.type == ant_state.seek_type {
-				found_item = true
-			}
+			seek_item(&ant, neighborhood, state.grid, ant_state.seek_type)
 
-			if found_item {
+			_, m_pos, _ := expand_values(get_immediate_neighborhood(ant))
+			block, _ := get_block(state.grid, expand_values(m_pos))
+
+			if block.type == ant_state.seek_type {
 				set_ant_state(&ant, AntState_Load{})
 				break
 			}
-			seek_pheromones(&ant, neighborhood, .Forage)
+			seek_pheromones(&ant, neighborhood, state.grid, .Forage)
 
 		case AntState_Load:
+			_, m_pos, _ := expand_values(get_immediate_neighborhood(ant))
+			block := get_block_ptr(&state.grid, expand_values(m_pos))
+
 			// If the ant is hauling, it's taking whatever block is in the middle
-			if (m.amount <= 0 || m.type == .Nothing) {
+			if (block.amount <= 0 || block.type == .Nothing) {
 				set_ant_state(&ant, AntState_Seek{seek_type = ant.load_type})
 				break
 			}
 
-			ant.load_type = m.type
+			ant.load_type = block.type
 
 			// Get a mutable m block as we need to modify the grid
-			m_mut := get_block_ptr(&state.grid, mp.x, mp.y)
-			amount := min(ant_data.load_speed * rl.GetFrameTime(), m_mut.amount)
+			amount := min(ant_data.load_speed * rl.GetFrameTime(), block.amount)
 			ant.load += amount
-			m_mut.amount -= amount
+			block.amount -= amount
 
-			// Set the block to nothing 
-			// TODO: Probably move this to an update_grid() function along with pheromone diffusion 
-			if (m_mut.amount <= 0) {
-				m_mut.type = .Nothing
-			}
-
-			try_spread_pheromone(&ant, &state.grid, .General)
+			try_spread_pheromone(&ant, &state.grid, .Forage)
 
 			// Always return home if the load is too large 
 			if (ant_data.carrying_capacity != 0 && ant.load >= ant_data.carrying_capacity) {
@@ -392,21 +382,63 @@ turn_ant :: proc(ant: ^Ant, direction: Direction) {
 	}
 }
 
-seek_pheromones :: proc(ant: ^Ant, neighborhood: Neighborhood, pheromone: Pheromone) {
-	direction: Direction
-	most_pheromones: u8 = 0
-	l, m, r := expand_values(neighborhood.blocks)
-	if (l.pheromones[.Danger] > most_pheromones) {
-		most_pheromones = l.pheromones[.Danger]
-		direction = .Left
-	} else if (m.pheromones[.Danger] > most_pheromones) {
-		most_pheromones = m.pheromones[.Danger]
-		direction = .Forward
-	} else if (r.pheromones[.Danger] > most_pheromones) {
-		most_pheromones = r.pheromones[.Danger]
-		direction = .Right
+seek_item :: proc(
+	ant: ^Ant,
+	neighborhood: Neighborhood,
+	grid: Grid,
+	block_type: EnvironmentType,
+) -> bool {
+	best_index: i32 = -1
+	best_distance: f32
+	for index in neighborhood {
+		block, _ := get_block(grid, int(index))
+		if block.type == block_type {
+			block_position := get_world_position_from_block_index(index)
+			block_distance := rl.Vector2Distance(ant.pos, block_position)
+			if best_index == -1 || block_distance < best_distance {
+				best_index = index
+				best_distance = block_distance
+			}
+		}
 	}
-	turn_ant(ant, direction)
+
+	if best_index == -1 {
+		return false
+	}
+
+
+	// TODO: Use A* or something?
+	desired_world_position := get_world_position_from_block_index(best_index)
+	ant.direction = rl.Vector2Normalize(desired_world_position - ant.pos)
+
+	return true
+}
+
+get_world_position_from_block_index :: proc(index: i32) -> rl.Vector2 {
+	grid_position := Grid_Cell_Position{index / GRID_WIDTH, index % GRID_HEIGHT}
+	return rl.Vector2{f32(grid_position.x), f32(grid_position.y)} * GRID_CELL_SIZE
+}
+
+seek_pheromones :: proc(ant: ^Ant, neighborhood: Neighborhood, grid: Grid, pheromone: Pheromone) {
+	most_pheromones: u8 = 0
+	best_index: i32 = -1
+	for index in neighborhood {
+		block, _ := get_block(grid, int(index))
+		pheromones_on_block := block.pheromones[pheromone]
+		if pheromones_on_block > most_pheromones {
+			most_pheromones = pheromones_on_block
+			best_index = index
+		}
+	}
+
+	if best_index == -1 {
+		return
+	}
+
+	desired_world_position := get_world_position_from_block_index(best_index)
+
+	// TODO: Use A* or something?
+	ant.direction = rl.Vector2Normalize(desired_world_position - ant.pos)
 }
 
 set_ant_state :: proc(ant: ^Ant, state: AntState) {
@@ -425,59 +457,91 @@ set_ant_state :: proc(ant: ^Ant, state: AntState) {
 	ant.state = state
 }
 
-get_neighborhood :: proc(ant: Ant, state: GameState) -> (Neighborhood, bool) {
-	// Ray cast at -30 degrees, 0 degrees, and 30 degrees, from the ants direction vector 
-	directions := [3]rl.Vector2 {
-		rl.Vector2Rotate(ant.direction, -30), // Left
-		ant.direction, // Middle
-		rl.Vector2Rotate(ant.direction, -30), // Right
-	}
-	block_index := get_block_index(ant.pos)
+Grid_Cell_Position :: [2]i32
 
-	// FIXME: Issues with this 
-	MAX_RAYCASTS :: 4
-	RAY_INCREMENT :: GRID_CELL_SIZE / 6.0
+// This is in block sizes
+DEFAULT_SEARCH_RADIUS :: 10
+DEFAULT_NUM_RAYS :: 10
+RAY_INCREMENT :: GRID_CELL_SIZE / 6.0
 
-	neighborhood: Neighborhood
-	for i in 0 ..< 3 {
-		neighborhood.grid_positions[i] = INVALID_BLOCK_POSITION
-		for inc in 0 ..< MAX_RAYCASTS {
-			inc := f32(inc)
-			ray_position := ant.pos + (directions[i] * RAY_INCREMENT * inc)
-			ray_index := get_block_index(ray_position)
-			if ray_index != block_index {
-				block, ok := get_block(state.grid, ray_position)
-				if !ok do break
-				neighborhood.grid_positions[i].x = i32(ray_position.x / GRID_CELL_SIZE)
-				neighborhood.grid_positions[i].y = i32(ray_position.y / GRID_CELL_SIZE)
-				neighborhood.blocks[i] = block
-				break
+get_neighborhood :: proc(
+	ant: Ant,
+	state: GameState,
+	radius: f32 = DEFAULT_SEARCH_RADIUS,
+	cone_degrees: int = 150, // 360 here would be full vision
+) -> (
+	neighborhood: Neighborhood,
+) {
+
+	origin_block_index := get_block_index(ant.pos)
+
+	for i in 0 ..< DEFAULT_NUM_RAYS {
+		angle := f32((i * (cone_degrees / DEFAULT_NUM_RAYS)) - (cone_degrees / 2))
+		direction := rl.Vector2Normalize(rl.Vector2Rotate(ant.direction, angle))
+
+		ray_position := ant.pos + (direction * RAY_INCREMENT)
+		distance: f32 = 0
+		for distance < DEFAULT_SEARCH_RADIUS {
+			ray_block_index := get_block_index(ray_position)
+			// TODO: Use a real raycasting algorithm that does not rely on pure naive chance... after the jam...
+			// Add all blocks touched by the ray in the set
+			if origin_block_index != ray_block_index {
+				neighborhood[ray_block_index] = {}
 			}
+			distance = rl.Vector2Distance(ant.pos, ray_position)
+			ray_position += (direction * RAY_INCREMENT)
 		}
 	}
 
-	return neighborhood, true
+	return
 }
 
-grid_cell_to_world_pos :: proc(x: i32, y: i32) -> rl.Vector2 {
-	return rl.Vector2{f32(x) * GRID_CELL_SIZE, f32(y) * GRID_CELL_SIZE}
+// This gets the blocks on the left, in the middle, and to the right of the ant, at 30 degree angle offsets, in that order 
+get_immediate_neighborhood :: proc(ant: Ant) -> (grid_positions: [3]Grid_Cell_Position) {
+	origin_block_index := get_block_index(ant.pos)
+	directions := [3]rl.Vector2 {
+		rl.Vector2Rotate(ant.direction, -30),
+		ant.direction,
+		rl.Vector2Rotate(ant.direction, 30),
+	}
+
+	for dir, i in directions {
+		distance: f32 = 0
+		ray_position := ant.pos + (dir * RAY_INCREMENT)
+		ray_block_index := get_block_index(ray_position)
+		for ray_block_index == origin_block_index {
+			ray_position += (dir * RAY_INCREMENT)
+			ray_block_index = get_block_index(ray_position)
+		}
+		grid_positions[i] = {
+			i32(ray_position.x / GRID_CELL_SIZE),
+			i32(ray_position.y / GRID_CELL_SIZE),
+		}
+	}
+
+	return
 }
 
-walk_ant :: proc(ant: ^Ant, neighborhood: Neighborhood) -> bool {
+walk_ant :: proc(ant: ^Ant, grid: Grid) -> bool {
 	ant_data := AntValues[ant.type]
+
 	// Ensure there is nothing in the way
-	l, m, r := expand_values(neighborhood.blocks)
+	lp, mp, rp := expand_values(get_immediate_neighborhood(ant^))
+	l, l_real := get_block(grid, expand_values(lp))
+	m, m_real := get_block(grid, expand_values(mp))
+	r, r_real := get_block(grid, expand_values(rp))
+
 	// Move forward if we're good 
-	if is_block_permeable(m.type) {
+	if m_real && is_block_permeable(m.type) {
 		ant.pos += ant.direction * rl.GetFrameTime() * ant_data.speed
 		return true
 	}
 
 	// Otherwise make adjustments and try to walk on the next frame 
-	if !is_block_permeable(l.type) && !is_block_permeable(r.type) {
+	if (!l_real || !is_block_permeable(l.type)) && (!r_real || !is_block_permeable(r.type)) {
 		// If the entire way forward is full of rocks, rotate the entire direction 90 degrees 
 		turn_ant(ant, .Around)
-	} else if !is_block_permeable(l.type) {
+	} else if (!l_real || !is_block_permeable(l.type)) {
 		turn_ant(ant, .Right)
 	} else {
 		turn_ant(ant, .Left)
@@ -485,6 +549,18 @@ walk_ant :: proc(ant: ^Ant, neighborhood: Neighborhood) -> bool {
 
 	return false
 }
+
+// init_ants :: proc() -> [dynamic]Ant {
+// 	return make([dynamic]Ant)
+// }
+
+// deinit_ants :: proc(ants: ^[dynamic]Ant) {
+// 	for &ant in ants {
+// 		deinit_ant(&ant)
+// 	}
+
+// 	free(ants)
+// }
 
 draw_ants :: proc(ants: []Ant) {
 	for ant in ants {

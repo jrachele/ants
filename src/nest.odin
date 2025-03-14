@@ -8,16 +8,20 @@ Nest :: struct {
 	inventory:        Inventory,
 	current_priority: AntPriority,
 	priority_weight:  u8,
+	health:           f32,
+}
+
+DEFAULT_NEST :: Nest {
+	current_priority = .Food,
+	priority_weight  = 75,
+	health           = 1000,
 }
 
 NEST_POS :: rl.Vector2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
 NEST_SIZE :: 10
 
 init_nest :: proc() -> (nest: Nest) {
-	// Set the current priority to 75% food by default
-	nest.current_priority = .Food
-	nest.priority_weight = 75
-
+	nest = DEFAULT_NEST
 	return
 }
 

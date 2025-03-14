@@ -50,11 +50,11 @@ main :: proc() {
 
 	grid := init_grid()
 	defer deinit_grid(&grid)
-	ants: [dynamic]Ant
+
+	ants := make([dynamic]Ant)
 	defer delete(ants)
 
 	nest := init_nest()
-
 
 	state := GameState {
 		stage  = .Title,
