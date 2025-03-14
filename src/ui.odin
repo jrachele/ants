@@ -27,11 +27,10 @@ measure_text :: proc "c" (
 	return {width = f32(text.length * i32(config.fontSize)), height = f32(config.fontSize)}
 }
 
-clay_memory: [^]u8
-init_hud :: proc() {
+init_hud :: proc(clay_memory: ^[^]u8) {
 	min_memory_size: u32 = clay.MinMemorySize()
-	clay_memory := make([^]u8, min_memory_size)
-	arena: clay.Arena = clay.CreateArenaWithCapacityAndMemory(uint(min_memory_size), clay_memory)
+	clay_memory^ = make([^]u8, min_memory_size)
+	arena: clay.Arena = clay.CreateArenaWithCapacityAndMemory(uint(min_memory_size), clay_memory^)
 	clay.Initialize(
 		arena,
 		{width = WINDOW_WIDTH, height = WINDOW_HEIGHT},
@@ -40,10 +39,6 @@ init_hud :: proc() {
 
 	// Tell clay how to measure text
 	clay.SetMeasureTextFunction(measure_text, nil)
-}
-
-deinit_hud :: proc() {
-	free(clay_memory)
 }
 
 update_hud :: proc() {
@@ -222,13 +217,13 @@ draw_clay :: proc(state: GameState) {
 					fmt.sbprintfln(&sb, "Pheromones:")
 					for pheromone in Pheromone {
 						amt := block.pheromones[pheromone]
-						fmt.sbprintfln(&sb, "%v: %d", pheromone, amt)
+						fmt.sbprintfln(&sb, "%v: %.2f", pheromone, amt)
 					}
 					pheromone_info := strings.to_string(sb)
 
 					info := fmt.aprintfln("%v\n%.2f\n%s", block.type, block.amount, pheromone_info)
 					// TODO: Refactor this, God
-					sidebar_item_component(1000, info)
+					sidebar_item_component(0, info)
 				}
 			}
 		}

@@ -3,7 +3,9 @@ package ants
 import "base:builtin"
 import clay "clay-odin"
 import renderer "clay-renderer"
+import "core:fmt"
 import "core:math"
+import "core:mem"
 import "core:reflect"
 import "core:slice"
 import "core:time"
@@ -49,16 +51,27 @@ camera: rl.Camera2D
 grid_target: rl.RenderTexture2D
 
 main :: proc() {
+	when ODIN_DEBUG {
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		context.allocator = mem.tracking_allocator(&track)
+
+		defer {
+			if len(track.allocation_map) > 0 {
+				fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
+				for _, entry in track.allocation_map {
+					fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+				}
+			}
+			mem.tracking_allocator_destroy(&track)
+		}
+	}
+
 	rl.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Ants!")
 	defer rl.CloseWindow()
 
 	grid := init_grid()
 	defer deinit_grid(&grid)
-
-	// ants := init_ants()
-	// defer deinit_ants(&ants)
-	ants := make([dynamic]Ant)
-	defer delete(ants)
 
 	nest := init_nest()
 
@@ -66,16 +79,18 @@ main :: proc() {
 		stage  = .Title,
 		grid   = grid,
 		nest   = nest,
-		ants   = ants,
 		paused = false,
 	}
+
+	defer delete(state.ants)
 
 	// Load assets
 	emoji_font := rl.LoadFont("assets/NotoEmoji-Regular.ttf")
 	ASSETS.fonts[.Emoji] = &emoji_font
 
-	init_hud()
-	defer deinit_hud()
+	clay_memory: [^]u8
+	init_hud(&clay_memory)
+	defer free(clay_memory)
 
 	camera.zoom = 1.0
 
@@ -144,7 +159,7 @@ update :: proc(state: ^GameState) {
 				debug_overlay = !debug_overlay
 			}
 		}
-		update_grid(&state.grid)
+		update_grid(state)
 		update_ants(state)
 		update_hud()
 	}

@@ -1,12 +1,18 @@
 package ants
 
 import "core:fmt"
+import "core:slice"
 import rl "vendor:raylib"
 
 // The grid will contain aspects of the environment 
 GRID_CELL_SIZE :: 4
 GRID_HEIGHT :: WINDOW_HEIGHT / GRID_CELL_SIZE
 GRID_WIDTH :: WINDOW_WIDTH / GRID_CELL_SIZE
+
+INVALID_BLOCK_POSITION := [2]i32{-1, -1}
+
+// Store a set of block indices 
+Neighborhood :: map[i32]struct {}
 
 EnvironmentType :: enum {
 	Nothing,
@@ -26,7 +32,7 @@ Pheromone :: enum {
 
 EnvironmentBlock :: struct {
 	type:       EnvironmentType,
-	pheromones: [Pheromone]u8,
+	pheromones: [Pheromone]f32,
 	amount:     f32,
 }
 
@@ -167,17 +173,17 @@ init_grid :: proc() -> (grid: Grid) {
 	}
 
 	// Create some general pheromones around the nest 
-	for i in 0 ..< NEST_SIZE * 2 {
-		for j in 0 ..< NEST_SIZE * 2 {
-			block: ^EnvironmentBlock = get_block_ptr(
-				&grid,
-				NEST_POS + {f32(i - NEST_SIZE), f32(j - (NEST_SIZE))},
-			)
-			block.pheromones[.General] = 100
-			block.type = .Nothing
-			block.amount = 0
-		}
-	}
+	// for i in 0 ..< NEST_SIZE * 2 {
+	// 	for j in 0 ..< NEST_SIZE * 2 {
+	// 		block: ^EnvironmentBlock = get_block_ptr(
+	// 			&grid,
+	// 			NEST_POS + {f32(i - NEST_SIZE), f32(j - (NEST_SIZE))},
+	// 		)
+	// 		block.pheromones[.General] = 100
+	// 		block.type = .Nothing
+	// 		block.amount = 0
+	// 	}
+	// }
 
 	grid.selected_block = INVALID_BLOCK_POSITION
 	grid.dirty = true
@@ -190,8 +196,17 @@ deinit_grid :: proc(grid: ^Grid) {
 	delete(grid.data)
 }
 
-update_grid :: proc(grid: ^Grid) {
+MAX_PHEROMONES :: 100
+
+PHEROMONE_DIFFUSION_RATE :: 1 // Second
+// Each tick, decay the block to this percentage of its current amount, then begin the diffusion process
+PHEROMONE_DECAY_COEFFICIENT :: 0.97
+// Each tick of the diffusion, set the blocks around the current block to this amount of its pheromones
+PHEROMONE_DIFFUSION_COEFFICIENT :: 0.01
+
+update_grid :: proc(state: ^GameState) {
 	mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
+	grid := &state.grid
 	if (rl.IsMouseButtonPressed(.LEFT)) {
 		grid_pos := mouse_pos / GRID_CELL_SIZE
 		if i32(grid_pos.x) == grid.selected_block.x && i32(grid_pos.y) == grid.selected_block.y {
@@ -202,6 +217,8 @@ update_grid :: proc(grid: ^Grid) {
 		}
 	}
 
+	if state.paused do return
+
 	diffused_pheromones := false
 	for i in 0 ..< len(grid.data) {
 		// Set the block to nothing if the amount is 0
@@ -210,16 +227,62 @@ update_grid :: proc(grid: ^Grid) {
 			block.type = .Nothing
 			grid.dirty = true
 		}
+	}
 
-		if grid.pheromone_diffusion_countdown < 0 {
-			// TODO: diffuse pheromones
-			diffused_pheromones = true
+	if grid.pheromone_diffusion_countdown < 0 {
+		// TODO: diffuse pheromones
+		// We will need to copy the grid completely (this is a bit expensive...)
+		grid_copy := slice.clone(grid.data[:])
+		defer delete(grid_copy)
+
+		for y in 0 ..< i32(GRID_HEIGHT) {
+			for x in 0 ..< i32(GRID_WIDTH) {
+				// Ignore all decay and diffusion on pheromones within the nest
+				block_position := rl.Vector2{f32(x) * GRID_CELL_SIZE, f32(y) * GRID_CELL_SIZE}
+				if is_in_nest(block_position + {GRID_CELL_SIZE / 2, GRID_CELL_SIZE / 2}) do continue
+
+				index := get_block_index(x, y)
+				reference_block := grid_copy[index]
+				block_mut := &grid.data[index]
+
+				// Decay
+				for ph in Pheromone {
+					block_mut.pheromones[ph] =
+						clamp(reference_block.pheromones[ph], 0, MAX_PHEROMONES) *
+						PHEROMONE_DECAY_COEFFICIENT
+					if block_mut.pheromones[ph] < 0.5 {
+						block_mut.pheromones[ph] = 0
+					}
+				}
+
+				// Diffusion
+				for oy in i32(-1) ..= 1 {
+					for ox in i32(-1) ..= 1 {
+						// Ignore the center piece
+						if oy == 0 && ox == 0 do continue
+						neighbor_index := get_block_index(x + ox, y + oy)
+						if !is_block_index_valid(neighbor_index) do continue
+						for ph in Pheromone {
+							amount :=
+								reference_block.pheromones[ph] * PHEROMONE_DIFFUSION_COEFFICIENT
+							grid.data[neighbor_index].pheromones[ph] = clamp(
+								grid.data[neighbor_index].pheromones[ph] + amount,
+								0,
+								MAX_PHEROMONES,
+							)
+						}
+					}
+				}
+			}
 		}
+
+		diffused_pheromones = true
 	}
 
 	// Reset the pheromone diffusion timer 
 	if diffused_pheromones {
 		grid.pheromone_diffusion_countdown = PHEROMONE_DIFFUSION_RATE
+		grid.dirty = true
 	}
 
 	grid.redraw_countdown -= rl.GetFrameTime()
@@ -238,10 +301,6 @@ is_block_collectable :: proc(type: EnvironmentType) -> bool {
 }
 
 GRID_REFRESH_RATE :: 1 // Second
-PHEROMONE_DIFFUSION_RATE :: 3 // Second
-// Each tick of the diffusion, set the current block to this amount and set the <=8 surrounding blocks to 1/8 * 100 - n
-PHEROMONE_DIFFUSION_STATIS_NUMBER :: 90
-
 draw_grid :: proc(grid: Grid) -> bool {
 	// Draw the grid on a timer
 	if !grid.dirty || grid.redraw_countdown > 0 do return false
@@ -260,8 +319,11 @@ draw_grid :: proc(grid: Grid) -> bool {
 			color := get_block_color(block.type)
 			for p in Pheromone {
 				pheromone_color := get_pheromone_color(p)
-				// TODO: Configure HUD overlays
-				color = rl.ColorLerp(color, pheromone_color, f32(block.pheromones[p]) / 500)
+				color = rl.ColorLerp(
+					color,
+					pheromone_color,
+					block.pheromones[p] / (MAX_PHEROMONES * 4),
+				)
 			}
 
 			// Impermeable types that can be picked up should interp based on amount 

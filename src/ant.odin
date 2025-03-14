@@ -133,12 +133,7 @@ AntState :: union {
 	AntState_ReturnHome, // Returning to the queen
 }
 
-INVALID_BLOCK_POSITION := [2]i32{-1, -1}
-
-// Store a set of block indices 
-Neighborhood :: map[i32]struct {}
-
-init_ant :: proc(type: AntType, nest: Nest, allocator := context.allocator) -> (ant: Ant) {
+init_ant :: proc(type: AntType, nest: Nest) -> (ant: Ant) {
 	ant_data := AntValues[type]
 	ant.pos = NEST_POS
 	// Initially, the ants can go wherever
@@ -150,17 +145,8 @@ init_ant :: proc(type: AntType, nest: Nest, allocator := context.allocator) -> (
 	return
 }
 
-// deinit_ant :: proc(ant: ^Ant) {
-// 	delete(&ant.neighborhood)
-// }
-
-spawn_ant :: proc(
-	state: ^GameState,
-	type: AntType = AntType.Peon,
-	immediately: bool = false,
-	allocator := context.allocator,
-) {
-	ant := init_ant(type, state.nest, allocator)
+spawn_ant :: proc(state: ^GameState, type: AntType = AntType.Peon, immediately: bool = false) {
+	ant := init_ant(type, state.nest)
 	if immediately {
 		ant.life_time = 0
 	}
@@ -224,7 +210,7 @@ update_ants :: proc(state: ^GameState) {
 			set_ant_state(&ant, AntState_Seek{seek_type = .Honey})
 		case AntState_ReturnHome:
 			// If you have made it back to the ants nest, begin unloading anything if you have it
-			if is_in_nest(ant) && ant.load > 0 {
+			if is_in_nest(ant.pos) && ant.load > 0 {
 				set_ant_state(&ant, AntState_Unload{})
 				break
 			}
@@ -442,7 +428,7 @@ get_world_position_from_block_index :: proc(index: i32) -> rl.Vector2 {
 }
 
 seek_pheromones :: proc(ant: ^Ant, neighborhood: Neighborhood, grid: Grid, pheromone: Pheromone) {
-	most_pheromones: u8 = 0
+	most_pheromones: f32 = 0
 	best_index: i32 = -1
 	for index in neighborhood {
 		block, _ := get_block(grid, int(index))
