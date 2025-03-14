@@ -218,7 +218,15 @@ draw_clay :: proc(state: GameState) {
 						return
 					}
 
-					info := fmt.aprintfln("%v\n%.2f", block.type, block.amount)
+					sb := strings.builder_make()
+					fmt.sbprintfln(&sb, "Pheromones:")
+					for pheromone in Pheromone {
+						amt := block.pheromones[pheromone]
+						fmt.sbprintfln(&sb, "%v: %d", pheromone, amt)
+					}
+					pheromone_info := strings.to_string(sb)
+
+					info := fmt.aprintfln("%v\n%.2f\n%s", block.type, block.amount, pheromone_info)
 					// TODO: Refactor this, God
 					sidebar_item_component(1000, info)
 				}

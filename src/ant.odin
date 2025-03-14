@@ -24,6 +24,7 @@ AntType :: enum {
 Ant :: struct {
 	pos:                      rl.Vector2,
 	direction:                rl.Vector2,
+	// neighborhood:             Neighborhood,
 	pheromone_time_remaining: f32,
 	health:                   f32,
 	life_time:                f32,
@@ -149,6 +150,10 @@ init_ant :: proc(type: AntType, nest: Nest, allocator := context.allocator) -> (
 	return
 }
 
+// deinit_ant :: proc(ant: ^Ant) {
+// 	delete(&ant.neighborhood)
+// }
+
 spawn_ant :: proc(
 	state: ^GameState,
 	type: AntType = AntType.Peon,
@@ -228,6 +233,8 @@ update_ants :: proc(state: ^GameState) {
 				try_spread_pheromone(&ant, &state.grid, .Forage)
 			}
 
+			// TODO: Fix direction lock-on
+			turn_ant(&ant, rl.Vector2Normalize(NEST_POS - ant.pos))
 			seek_pheromones(&ant, neighborhood, state.grid, .General)
 
 		case AntState_Seek:
@@ -247,6 +254,7 @@ update_ants :: proc(state: ^GameState) {
 				break
 			}
 			seek_pheromones(&ant, neighborhood, state.grid, .Forage)
+			try_spread_pheromone(&ant, &state.grid, .General)
 
 		case AntState_Load:
 			_, m_pos, _ := expand_values(get_immediate_neighborhood(ant))
@@ -270,7 +278,7 @@ update_ants :: proc(state: ^GameState) {
 			// Always return home if the load is too large 
 			if (ant_data.carrying_capacity != 0 && ant.load >= ant_data.carrying_capacity) {
 				// It's likely that the ant wants to turn back around here,
-				turn_ant(&ant, .Around)
+				turn_ant(&ant, Direction.Around)
 				set_ant_state(&ant, AntState_ReturnHome{})
 			}
 
@@ -288,10 +296,10 @@ update_ants :: proc(state: ^GameState) {
 		case AntState_Wander:
 			// Continue walking in the desired direction
 			try_spread_pheromone(&ant, &state.grid, .General)
-			turn_ant(&ant, .Forward)
+			turn_ant(&ant, Direction.Forward)
 		case AntState_Idle:
 			// Kinda spin around aimlessly.
-			turn_ant(&ant, .Forward)
+			turn_ant(&ant, Direction.Forward)
 			ant_state.idle_time_remaining -= rl.GetFrameTime()
 
 			// If it's time to stop idling, make sure we can get around obstacles 
@@ -363,23 +371,37 @@ Direction :: enum {
 	Right,
 	Around,
 }
-turn_ant :: proc(ant: ^Ant, direction: Direction) {
-	rotation_random_offset := get_random_value_f(-0.1, 0.1)
+
+turn_ant :: proc {
+	turn_ant_direction,
+	turn_ant_v2,
+}
+
+SLIGHT_TURN :: math.PI / 6
+HARD_TURN :: math.PI / 2
+
+turn_ant_direction :: proc(ant: ^Ant, direction: Direction) {
+	rotation_random_offset := get_random_value_f(-0.05, 0.05)
 	switch (direction) {
 	case .Left:
-		ant.direction = rl.Vector2Rotate(ant.direction, -30 + rotation_random_offset)
+		ant.direction = rl.Vector2Rotate(ant.direction, -SLIGHT_TURN + rotation_random_offset)
 	case .Right:
-		ant.direction = rl.Vector2Rotate(ant.direction, 30 + rotation_random_offset)
+		ant.direction = rl.Vector2Rotate(ant.direction, SLIGHT_TURN + rotation_random_offset)
 	case .Forward:
 		ant.direction = rl.Vector2Rotate(ant.direction, rotation_random_offset)
 	case .Around:
-		right := bool(rl.GetRandomValue(0, 1))
-		if right {
-			ant.direction = rl.Vector2Rotate(ant.direction, 90 + rotation_random_offset)
+		left := bool(rl.GetRandomValue(0, 1))
+		if left {
+			ant.direction = rl.Vector2Rotate(ant.direction, -HARD_TURN + rotation_random_offset)
 		} else {
-			ant.direction = rl.Vector2Rotate(ant.direction, -90 + rotation_random_offset)
+			ant.direction = rl.Vector2Rotate(ant.direction, HARD_TURN + rotation_random_offset)
 		}
 	}
+}
+
+turn_ant_v2 :: proc(ant: ^Ant, direction: rl.Vector2) {
+	rotation_random_offset := get_random_value_f(-0.05, 0.05)
+	ant.direction = rl.Vector2Rotate(direction, rotation_random_offset)
 }
 
 seek_item :: proc(
@@ -409,13 +431,13 @@ seek_item :: proc(
 
 	// TODO: Use A* or something?
 	desired_world_position := get_world_position_from_block_index(best_index)
-	ant.direction = rl.Vector2Normalize(desired_world_position - ant.pos)
+	turn_ant(ant, rl.Vector2Normalize(desired_world_position - ant.pos))
 
 	return true
 }
 
 get_world_position_from_block_index :: proc(index: i32) -> rl.Vector2 {
-	grid_position := Grid_Cell_Position{index / GRID_WIDTH, index % GRID_HEIGHT}
+	grid_position := Grid_Cell_Position{index % GRID_WIDTH, index / GRID_WIDTH}
 	return rl.Vector2{f32(grid_position.x), f32(grid_position.y)} * GRID_CELL_SIZE
 }
 
@@ -438,7 +460,7 @@ seek_pheromones :: proc(ant: ^Ant, neighborhood: Neighborhood, grid: Grid, phero
 	desired_world_position := get_world_position_from_block_index(best_index)
 
 	// TODO: Use A* or something?
-	ant.direction = rl.Vector2Normalize(desired_world_position - ant.pos)
+	turn_ant(ant, rl.Vector2Normalize(desired_world_position - ant.pos))
 }
 
 set_ant_state :: proc(ant: ^Ant, state: AntState) {
@@ -460,7 +482,7 @@ set_ant_state :: proc(ant: ^Ant, state: AntState) {
 Grid_Cell_Position :: [2]i32
 
 // This is in block sizes
-DEFAULT_SEARCH_RADIUS :: 10
+DEFAULT_SEARCH_RADIUS :: 40
 DEFAULT_NUM_RAYS :: 10
 RAY_INCREMENT :: GRID_CELL_SIZE / 6.0
 
@@ -468,7 +490,7 @@ get_neighborhood :: proc(
 	ant: Ant,
 	state: GameState,
 	radius: f32 = DEFAULT_SEARCH_RADIUS,
-	cone_degrees: int = 150, // 360 here would be full vision
+	cone_degrees: f32 = 150, // 360 here would be full vision
 ) -> (
 	neighborhood: Neighborhood,
 ) {
@@ -476,8 +498,8 @@ get_neighborhood :: proc(
 	origin_block_index := get_block_index(ant.pos)
 
 	for i in 0 ..< DEFAULT_NUM_RAYS {
-		angle := f32((i * (cone_degrees / DEFAULT_NUM_RAYS)) - (cone_degrees / 2))
-		direction := rl.Vector2Normalize(rl.Vector2Rotate(ant.direction, angle))
+		angle := f32(i) * (cone_degrees / DEFAULT_NUM_RAYS) - (cone_degrees / 2)
+		direction := rl.Vector2Normalize(rl.Vector2Rotate(ant.direction, math.to_radians(angle)))
 
 		ray_position := ant.pos + (direction * RAY_INCREMENT)
 		distance: f32 = 0
@@ -491,6 +513,12 @@ get_neighborhood :: proc(
 			distance = rl.Vector2Distance(ant.pos, ray_position)
 			ray_position += (direction * RAY_INCREMENT)
 		}
+
+		when ODIN_DEBUG {
+			if debug_overlay {
+				rl.DrawLineV(ant.pos, ray_position, rl.PINK)
+			}
+		}
 	}
 
 	return
@@ -500,9 +528,9 @@ get_neighborhood :: proc(
 get_immediate_neighborhood :: proc(ant: Ant) -> (grid_positions: [3]Grid_Cell_Position) {
 	origin_block_index := get_block_index(ant.pos)
 	directions := [3]rl.Vector2 {
-		rl.Vector2Rotate(ant.direction, -30),
+		rl.Vector2Rotate(ant.direction, -math.PI / 6),
 		ant.direction,
-		rl.Vector2Rotate(ant.direction, 30),
+		rl.Vector2Rotate(ant.direction, math.PI / 6),
 	}
 
 	for dir, i in directions {
@@ -540,11 +568,11 @@ walk_ant :: proc(ant: ^Ant, grid: Grid) -> bool {
 	// Otherwise make adjustments and try to walk on the next frame 
 	if (!l_real || !is_block_permeable(l.type)) && (!r_real || !is_block_permeable(r.type)) {
 		// If the entire way forward is full of rocks, rotate the entire direction 90 degrees 
-		turn_ant(ant, .Around)
+		turn_ant(ant, Direction.Around)
 	} else if (!l_real || !is_block_permeable(l.type)) {
-		turn_ant(ant, .Right)
+		turn_ant(ant, Direction.Right)
 	} else {
-		turn_ant(ant, .Left)
+		turn_ant(ant, Direction.Left)
 	}
 
 	return false
@@ -562,9 +590,24 @@ walk_ant :: proc(ant: ^Ant, grid: Grid) -> bool {
 // 	free(ants)
 // }
 
-draw_ants :: proc(ants: []Ant) {
-	for ant in ants {
+draw_ants :: proc(state: GameState) {
+	for ant in state.ants {
 		draw_ant(ant)
+
+		when ODIN_DEBUG {
+			if debug_overlay {
+				// Draw neighborhood 
+				neighborhood := get_neighborhood(ant, state)
+				defer delete(neighborhood)
+
+				for index in neighborhood {
+					pos := get_world_position_from_block_index(index)
+					color := rl.RED
+					color.a = 150
+					rl.DrawRectangleV(pos, GRID_CELL_SIZE, color)
+				}
+			}
+		}
 	}
 }
 

@@ -166,6 +166,19 @@ init_grid :: proc() -> (grid: Grid) {
 		}
 	}
 
+	// Create some general pheromones around the nest 
+	for i in 0 ..< NEST_SIZE * 2 {
+		for j in 0 ..< NEST_SIZE * 2 {
+			block: ^EnvironmentBlock = get_block_ptr(
+				&grid,
+				NEST_POS + {f32(i - NEST_SIZE), f32(j - (NEST_SIZE))},
+			)
+			block.pheromones[.General] = 100
+			block.type = .Nothing
+			block.amount = 0
+		}
+	}
+
 	grid.selected_block = INVALID_BLOCK_POSITION
 	grid.dirty = true
 
@@ -252,7 +265,7 @@ draw_grid :: proc(grid: Grid) -> bool {
 			}
 
 			// Impermeable types that can be picked up should interp based on amount 
-			if (!is_block_permeable(block.type)) {
+			if is_block_collectable(block.type) {
 				color = rl.ColorLerp(get_block_color(.Dirt), color, block.amount / 100)
 			}
 

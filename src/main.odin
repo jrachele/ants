@@ -28,6 +28,10 @@ GameState :: struct {
 	paused: bool,
 }
 
+when ODIN_DEBUG {
+	debug_overlay := false
+}
+
 Fonts :: enum {
 	Emoji,
 	Serif,
@@ -51,6 +55,8 @@ main :: proc() {
 	grid := init_grid()
 	defer deinit_grid(&grid)
 
+	// ants := init_ants()
+	// defer deinit_ants(&ants)
 	ants := make([dynamic]Ant)
 	defer delete(ants)
 
@@ -131,7 +137,12 @@ update :: proc(state: ^GameState) {
 		}
 	case .Game:
 		if rl.IsKeyPressed(.SPACE) {
-			state.paused = ~state.paused
+			state.paused = !state.paused
+		}
+		when ODIN_DEBUG {
+			if rl.IsKeyPressed(.O) {
+				debug_overlay = !debug_overlay
+			}
 		}
 		update_grid(&state.grid)
 		update_ants(state)
@@ -208,6 +219,6 @@ draw_game :: proc(state: ^GameState) {
 		rl.RAYWHITE,
 	)
 
-	draw_ants(state.ants[:])
+	draw_ants(state^)
 	draw_nest()
 }

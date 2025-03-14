@@ -32,7 +32,7 @@ draw_nest :: proc() {
 }
 
 is_in_nest :: proc(ant: Ant) -> bool {
-	return rl.Vector2Distance(ant.pos, NEST_POS) < NEST_SIZE
+	return rl.Vector2Distance(ant.pos, NEST_POS) < NEST_SIZE / 4
 }
 
 ant_state_from_nest :: proc(nest: Nest) -> (ant_state: AntState) {
