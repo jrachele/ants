@@ -44,7 +44,6 @@ Grid :: struct {
 	selected_block:                [2]i32,
 }
 
-// TODO: Look into wave function collapse or similar for generating areas that make more sense 
 // Must add up to 100
 BlockDistribution := [EnvironmentType]i32 {
 	.Grass   = 60,
@@ -160,30 +159,32 @@ get_selected_block_ptr :: proc(grid: ^Grid) -> ^EnvironmentBlock {
 	return get_block_ptr(grid, grid.selected_block.x, grid.selected_block.y)
 }
 
+get_world_position_from_block_index :: proc(index: i32) -> rl.Vector2 {
+	grid_position := Grid_Cell_Position{index % GRID_WIDTH, index / GRID_WIDTH}
+	return rl.Vector2{f32(grid_position.x), f32(grid_position.y)} * GRID_CELL_SIZE
+}
+
 init_grid :: proc() -> (grid: Grid) {
 	resize(&grid.data, GRID_WIDTH * GRID_HEIGHT)
-	for i in 0 ..< len(grid.data) {
-		grid.data[i].type = select_random_block()
+	for y in 0 ..< i32(GRID_HEIGHT) {
+		for x in 0 ..< i32(GRID_WIDTH) {
+			index := get_block_index(x, y)
+			block := &grid.data[index]
+			// The nest should have no blocks, but lots of pheromones
+			if is_in_nest(x, y) {
+				block.pheromones[.General] = 100
+				block.type = .Nothing
+				block.amount = 0
+			} else {
+				block.type = select_random_block()
+				// For types that can be picked up, add a random amount 
+				if is_block_collectable(block.type) {
+					block.amount = f32(rl.GetRandomValue(1, 100))
+				}
+			}
 
-		// For types that can be picked up, add a random amount 
-		#partial switch (grid.data[i].type) {
-		case .Rock, .Wood, .Honey:
-			grid.data[i].amount = f32(rl.GetRandomValue(1, 100))
 		}
 	}
-
-	// Create some general pheromones around the nest 
-	// for i in 0 ..< NEST_SIZE * 2 {
-	// 	for j in 0 ..< NEST_SIZE * 2 {
-	// 		block: ^EnvironmentBlock = get_block_ptr(
-	// 			&grid,
-	// 			NEST_POS + {f32(i - NEST_SIZE), f32(j - (NEST_SIZE))},
-	// 		)
-	// 		block.pheromones[.General] = 100
-	// 		block.type = .Nothing
-	// 		block.amount = 0
-	// 	}
-	// }
 
 	grid.selected_block = INVALID_BLOCK_POSITION
 	grid.dirty = true
@@ -230,7 +231,6 @@ update_grid :: proc(state: ^GameState) {
 	}
 
 	if grid.pheromone_diffusion_countdown < 0 {
-		// TODO: diffuse pheromones
 		// We will need to copy the grid completely (this is a bit expensive...)
 		grid_copy := slice.clone(grid.data[:])
 		defer delete(grid_copy)
@@ -238,8 +238,7 @@ update_grid :: proc(state: ^GameState) {
 		for y in 0 ..< i32(GRID_HEIGHT) {
 			for x in 0 ..< i32(GRID_WIDTH) {
 				// Ignore all decay and diffusion on pheromones within the nest
-				block_position := rl.Vector2{f32(x) * GRID_CELL_SIZE, f32(y) * GRID_CELL_SIZE}
-				if is_in_nest(block_position + {GRID_CELL_SIZE / 2, GRID_CELL_SIZE / 2}) do continue
+				if is_in_nest(x, y) do continue
 
 				index := get_block_index(x, y)
 				reference_block := grid_copy[index]

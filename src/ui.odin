@@ -131,7 +131,6 @@ draw_clay :: proc(state: GameState) {
 				i: u32 = 0
 				for ant_type in AntType {
 					if ant_counts[ant_type] > 0 {
-						// TODO: Fix buffers, set context to arena allocator or some ting
 						count_str := fmt.aprintfln("%vs: %d", ant_type, ant_counts[ant_type])
 						sidebar_item_component(i, count_str)
 						i += 1
@@ -197,9 +196,10 @@ draw_clay :: proc(state: GameState) {
 				if len(selected_ants) > 0 {
 					ant := selected_ants[0]
 					info := fmt.aprintfln(
-						"%v\n%v\nLD: %.2f (%v)\nPH:%.2fs\n",
+						"%v\n%v\n%v\nLD: %.2f (%v)\nPH:%.2fs\n",
 						ant.type,
 						ant.state,
+						ant.objective,
 						ant.load,
 						ant.load_type,
 						ant.pheromone_time_remaining,
@@ -222,7 +222,6 @@ draw_clay :: proc(state: GameState) {
 					pheromone_info := strings.to_string(sb)
 
 					info := fmt.aprintfln("%v\n%.2f\n%s", block.type, block.amount, pheromone_info)
-					// TODO: Refactor this, God
 					sidebar_item_component(0, info)
 				}
 			}
