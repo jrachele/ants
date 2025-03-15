@@ -9,7 +9,8 @@ GRID_CELL_SIZE :: 4
 GRID_HEIGHT :: WINDOW_HEIGHT / GRID_CELL_SIZE
 GRID_WIDTH :: WINDOW_WIDTH / GRID_CELL_SIZE
 
-INVALID_BLOCK_POSITION := [2]i32{-1, -1}
+Grid_Cell_Position :: [2]i32
+INVALID_BLOCK_POSITION := Grid_Cell_Position{-1, -1}
 
 // Store a set of block indices 
 Neighborhood :: map[i32]struct {}
@@ -215,6 +216,12 @@ update_grid :: proc(state: ^GameState) {
 			grid.selected_block = INVALID_BLOCK_POSITION
 		} else {
 			grid.selected_block = {i32(grid_pos.x), i32(grid_pos.y)}
+			if grid.selected_block.x < 0 ||
+			   grid.selected_block.x >= GRID_WIDTH ||
+			   grid.selected_block.y < 0 ||
+			   grid.selected_block.y >= GRID_HEIGHT {
+				grid.selected_block = INVALID_BLOCK_POSITION
+			}
 		}
 	}
 
@@ -287,16 +294,6 @@ update_grid :: proc(state: ^GameState) {
 	grid.redraw_countdown -= rl.GetFrameTime()
 	grid.pheromone_diffusion_countdown -= rl.GetFrameTime()
 
-}
-
-is_block_collectable :: proc(type: EnvironmentType) -> bool {
-	switch type {
-	case .Dirt, .Grass, .Nothing:
-		return false
-	case .Honey, .Rock, .Wood:
-		return true
-	}
-	return true
 }
 
 GRID_REFRESH_RATE :: 1 // Second
@@ -372,19 +369,6 @@ get_block_color :: proc(type: EnvironmentType) -> rl.Color {
 	}
 
 	return rl.PINK
-}
-
-is_block_permeable :: proc(type: EnvironmentType) -> bool {
-	switch (type) {
-	case .Grass, .Dirt, .Nothing:
-		return true
-	case .Rock, .Wood:
-		return false
-	case .Honey:
-		return false
-	}
-
-	return false
 }
 
 get_pheromone_color :: proc(type: Pheromone) -> rl.Color {

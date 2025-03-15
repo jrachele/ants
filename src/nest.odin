@@ -1,12 +1,22 @@
 package ants
 
+import "core:fmt"
 import rl "vendor:raylib"
 
 Inventory :: [EnvironmentType]f32
 
+NestPriority :: enum {
+	None, // No priorities, randomly assign
+	Food, // Seek honey
+	Supply, // Seek wood and rock
+	Defend, // Send armored and peons to danger areas to maintain order
+	Attack, // Send elites to danger areas and attack
+	Build, // Expand the nest, or deal with queued projects 
+}
+
 Nest :: struct {
 	inventory:        Inventory,
-	current_priority: AntPriority,
+	current_priority: NestPriority,
 	priority_weight:  u8,
 	health:           f32,
 }
@@ -14,7 +24,7 @@ Nest :: struct {
 DEFAULT_NEST :: Nest {
 	current_priority = .Food,
 	priority_weight  = 75,
-	health           = 1000,
+	health           = 20,
 }
 
 NEST_POS :: rl.Vector2{WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}
@@ -25,9 +35,25 @@ init_nest :: proc() -> (nest: Nest) {
 	return
 }
 
-draw_nest :: proc() {
+draw_nest :: proc(nest: Nest) {
 	color := rl.DARKPURPLE;color.a = 200
+
+	color = rl.ColorLerp(color, rl.RED, (DEFAULT_NEST.health - nest.health) / DEFAULT_NEST.health)
 	rl.DrawCircleV(NEST_POS, NEST_SIZE, color)
+
+	buf: [256]u8
+	hp_label := fmt.bprintf(buf[:], "%d HP", i32(nest.health))
+	label_color := rl.WHITE
+	label_color.a = 100
+	draw_text_align(
+		rl.GetFontDefault(),
+		hp_label,
+		i32(NEST_POS.x),
+		i32(NEST_POS.y - 20),
+		.Center,
+		10,
+		label_color,
+	)
 	// TODO: Draw ant information over the nest for clarity
 }
 

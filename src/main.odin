@@ -22,12 +22,13 @@ Stage :: enum {
 }
 
 GameState :: struct {
-	stage:  Stage,
-	grid:   Grid,
-	ants:   [dynamic]Ant,
-	nest:   Nest,
-	timer:  time.Stopwatch,
-	paused: bool,
+	stage:   Stage,
+	grid:    Grid,
+	ants:    [dynamic]Ant,
+	enemies: [dynamic]Enemy,
+	nest:    Nest,
+	timer:   time.Stopwatch,
+	paused:  bool,
 }
 
 when ODIN_DEBUG {
@@ -83,6 +84,7 @@ main :: proc() {
 	}
 
 	defer delete(state.ants)
+	defer delete(state.enemies)
 
 	// Load assets
 	emoji_font := rl.LoadFont("assets/NotoEmoji-Regular.ttf")
@@ -161,6 +163,7 @@ update :: proc(state: ^GameState) {
 		}
 		update_grid(state)
 		update_ants(state)
+		update_enemies(state)
 		update_hud()
 	}
 }
@@ -222,18 +225,21 @@ draw_game :: proc(state: ^GameState) {
 	// Draw the selected block 
 	// TODO: Move this someplace appropriate
 	selected_index := state.grid.selected_block
-	rl.DrawRectangleRoundedLines(
-		{
-			f32(selected_index.x) * GRID_CELL_SIZE,
-			f32(selected_index.y) * GRID_CELL_SIZE,
-			GRID_CELL_SIZE,
-			GRID_CELL_SIZE,
-		},
-		2,
-		0,
-		rl.RAYWHITE,
-	)
+	if selected_index != INVALID_BLOCK_POSITION {
+		rl.DrawRectangleRoundedLines(
+			{
+				f32(selected_index.x) * GRID_CELL_SIZE,
+				f32(selected_index.y) * GRID_CELL_SIZE,
+				GRID_CELL_SIZE,
+				GRID_CELL_SIZE,
+			},
+			2,
+			0,
+			rl.RAYWHITE,
+		)
+	}
 
 	draw_ants(state^)
-	draw_nest()
+	draw_enemies(state^)
+	draw_nest(state.nest)
 }

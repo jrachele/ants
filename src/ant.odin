@@ -7,8 +7,6 @@ import "core:strings"
 import "core:time"
 import rl "vendor:raylib"
 
-ANT_AVG_LIFESPAN :: 100
-ANT_PHEROMONE_RATE :: 0.5
 ANT_IDLE_TIME :: 0.300
 
 // milliseconds
@@ -21,16 +19,8 @@ AntType :: enum {
 	Elite,
 }
 
-Walkable :: struct {
-	pos:       rl.Vector2,
-	direction: rl.Vector2,
-	speed:     f32,
-	health:    f32,
-	life_time: f32,
-}
-
 Ant :: struct {
-	using walkable:           Walkable,
+	using creature:           Creature,
 	pheromone_time_remaining: f32,
 	load:                     f32,
 	load_type:                EnvironmentType,
@@ -40,35 +30,15 @@ Ant :: struct {
 	selected:                 bool,
 }
 
-Enemy :: struct {
-	using walkable: Walkable,
+AntMetadata :: struct {
+	using creature_meta: CreatureMetadata,
+	carrying_capacity:   f32,
+	spawn_cost:          f32,
+	load_speed:          f32,
 }
 
-AntMetaData :: struct {
-	color:             rl.Color,
-	size:              f32,
-	initial_speed:     f32,
-	initial_life:      f32, // Initial life stage when spawned 
-	average_life:      f32, // Average life stage until health deteriorates 
-	initial_health:    f32,
-	carrying_capacity: f32,
-	spawn_cost:        f32,
-	load_speed:        f32,
-}
-
-AntPriority :: enum {
-	None, // No priorities, randomly assign
-	Food, // Seek honey
-	Supply, // Seek wood and rock
-	Defend, // Send armored and peons to danger areas to maintain order
-	Attack, // Send elites to danger areas and attack
-	Build, // Expand the nest, or deal with queued projects 
-}
-
-ANT_ALPHA :: 200
-
-AntValues := [AntType]AntMetaData {
-	.Peon = AntMetaData {
+AntValues := [AntType]AntMetadata {
+	.Peon = AntMetadata {
 		size = 1,
 		initial_speed = 15,
 		color = rl.BLACK,
@@ -79,10 +49,10 @@ AntValues := [AntType]AntMetaData {
 		spawn_cost = 0,
 		load_speed = 2,
 	},
-	.Armored = AntMetaData {
+	.Armored = AntMetadata {
 		size = 2,
 		initial_speed = 10,
-		color = rl.RED,
+		color = rl.DARKGRAY,
 		initial_life = -20,
 		average_life = 300,
 		initial_health = 100,
@@ -90,7 +60,7 @@ AntValues := [AntType]AntMetaData {
 		spawn_cost = 10,
 		load_speed = 5,
 	},
-	.Porter = AntMetaData {
+	.Porter = AntMetadata {
 		size = 2,
 		initial_speed = 15,
 		color = rl.GREEN,
@@ -101,7 +71,7 @@ AntValues := [AntType]AntMetaData {
 		spawn_cost = 10,
 		load_speed = 20,
 	},
-	.Elite = AntMetaData {
+	.Elite = AntMetadata {
 		size = 4,
 		initial_speed = 10,
 		color = rl.BLUE,
@@ -182,6 +152,9 @@ spawn_ant :: proc(state: ^GameState, type: AntType = AntType.Peon, immediately: 
 	append(&state.ants, ant)
 }
 
+ATTACK_DISTANCE :: 5
+PURSUIT_DISTANCE :: 20
+
 update_ants :: proc(state: ^GameState) {
 	mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
 	for &ant in state.ants {
@@ -206,6 +179,28 @@ update_ants :: proc(state: ^GameState) {
 			continue
 		}
 
+		// If any enemies are in the area, immediately go into war mode
+		found_enemy := false
+		for enemy in state.enemies {
+			distance := rl.Vector2Distance(ant.pos, enemy.pos)
+			if distance < PURSUIT_DISTANCE {
+				found_enemy = true
+				break
+			}
+		}
+
+		// TODO: Use pheromones and actually make this proper
+		if found_enemy {
+			set_ant_state(&ant, AntState_Fight{})
+		} else {
+			// _, is_at_war := ant.objective.(AntObjective_War)
+			// if is_at_war {
+			// 	// Stop warring if no enemies in sight
+			// 	ant.objective = roll_ant_objective(state.nest)
+			// 	set_ant_state(&ant, AntState_Idle{})
+			// }
+		}
+
 		// Handle ant states
 		switch &ant_state in ant.state {
 		case AntState_Walk:
@@ -216,21 +211,37 @@ update_ants :: proc(state: ^GameState) {
 				break
 			}
 
-			turn_ant(&ant, Direction.Forward)
+			turn_creature(&ant, Direction.Forward)
 
 			// Lock the direction back in if the ant has strayed too far away from the target position
 			direction := rl.Vector2Normalize(ant_state.target_pos - ant.pos)
 			if abs(rl.Vector2Angle(ant.direction, direction)) > math.PI / 4 {
-				turn_ant(&ant, direction)
+				turn_creature(&ant, direction)
 			}
 
 			// If the ant was unable to walk due to an obstacle, idle
-			if !walk_ant(&ant, state.grid) {
+			if !walk_creature(&ant, state.grid) {
 				set_ant_state(&ant, AntState_Idle{})
 			}
 
 		case AntState_Fight:
-		// TODO: turn towards enemy, and if close enough attack 
+			if found_enemy == false {
+				set_ant_state(&ant, AntState_Idle{})
+				break
+			}
+			for &enemy in state.enemies {
+				distance := rl.Vector2Distance(ant.pos, enemy.pos)
+				if distance < PURSUIT_DISTANCE {
+					turn_creature(&ant, rl.Vector2Normalize(enemy.pos - ant.pos))
+					walk_creature(&ant, state.grid)
+
+					if distance < ATTACK_DISTANCE {
+						enemy.health -= 1
+					}
+
+					break
+				}
+			}
 		case AntState_Load:
 			front_block_position := get_front_block(ant)
 			block := get_block_ptr(&state.grid, expand_values(front_block_position))
@@ -283,7 +294,7 @@ update_ants :: proc(state: ^GameState) {
 				if desired_block.forage_type != front_block.type &&
 				   !is_block_permeable(front_block.type) {
 					// Get out tha wayyyyy
-					turn_ant(&ant, Direction.Right)
+					turn_creature(&ant, Direction.Right)
 					ant_wander(&ant)
 				}
 			}
@@ -406,9 +417,24 @@ update_ants :: proc(state: ^GameState) {
 		inventory[.Honey] -= AntValues[spawn_type].spawn_cost
 		spawn_ant(state, spawn_type)
 
+		// TODO: Move spawning of all creatures somewhere else 
+		spawn_enemy(state)
+
 		time.stopwatch_reset(&state.timer)
 		time.stopwatch_start(&state.timer)
 	}
+}
+
+set_ant_state :: proc(ant: ^Ant, state: AntState) {
+	// If we are setting the state to an idle state, set a proper default idle_time_remaining
+	idle_state, ok := state.(AntState_Idle)
+	if (ok) {
+		if idle_state.idle_time_remaining == 0 {
+			idle_state.idle_time_remaining = ANT_IDLE_TIME + get_random_value_f(-0.1, 0.1)
+		}
+	}
+
+	ant.state = state
 }
 
 ant_wander :: proc(ant: ^Ant) {
@@ -430,202 +456,6 @@ assign_ant_new_objective :: proc(ant: ^Ant, nest: Nest) {
 	ant.objective = new_ant_objective
 }
 
-try_spread_pheromone :: proc(ant: ^Ant, grid: ^Grid, pheromone: Pheromone) -> bool {
-	if ant.pheromone_time_remaining <= 0 {
-		block := get_block_ptr(grid, ant.pos)
-		if block != nil && block.pheromones[pheromone] != 255 {
-			block.pheromones[pheromone] += 1
-		}
-
-		ant.pheromone_time_remaining = ANT_PHEROMONE_RATE + get_random_value_f(-0.5, 0.5)
-		return true
-	}
-	return false
-}
-
-Direction :: enum {
-	Forward,
-	Left,
-	Right,
-	Around,
-}
-
-turn_ant :: proc {
-	turn_ant_direction,
-	turn_ant_v2,
-}
-
-SLIGHT_TURN :: math.PI / 6
-HARD_TURN :: math.PI / 2
-
-turn_ant_direction :: proc(ant: ^Ant, direction: Direction) {
-	rotation_random_offset := get_random_value_f(-0.1, 0.1)
-	switch (direction) {
-	case .Left:
-		ant.direction = rl.Vector2Rotate(ant.direction, -SLIGHT_TURN + rotation_random_offset)
-	case .Right:
-		ant.direction = rl.Vector2Rotate(ant.direction, SLIGHT_TURN + rotation_random_offset)
-	case .Forward:
-		ant.direction = rl.Vector2Rotate(ant.direction, rotation_random_offset)
-	case .Around:
-		left := bool(rl.GetRandomValue(0, 1))
-		if left {
-			ant.direction = rl.Vector2Rotate(ant.direction, -HARD_TURN + rotation_random_offset)
-		} else {
-			ant.direction = rl.Vector2Rotate(ant.direction, HARD_TURN + rotation_random_offset)
-		}
-	}
-}
-
-turn_ant_v2 :: proc(ant: ^Ant, direction: rl.Vector2) {
-	rotation_random_offset := get_random_value_f(-0.05, 0.05)
-	ant.direction = rl.Vector2Rotate(direction, rotation_random_offset)
-}
-
-find_item :: proc(
-	ant: ^Ant,
-	neighborhood: Neighborhood,
-	grid: Grid,
-	block_type: EnvironmentType,
-) -> rl.Vector2 {
-	best_index: i32 = -1
-	best_distance: f32
-	for index in neighborhood {
-		block, _ := get_block(grid, int(index))
-		if block.type == block_type {
-			block_position := get_world_position_from_block_index(index)
-			block_distance := rl.Vector2Distance(ant.pos, block_position)
-			if best_index == -1 || block_distance < best_distance {
-				best_index = index
-				best_distance = block_distance
-			}
-		}
-	}
-
-	if best_index == -1 {
-		return {-1, -1}
-	}
-
-	return get_world_position_from_block_index(best_index)
-}
-
-// Any blocks with a pheromone count below this will not be considered by the ant 
-PHEROMONE_SEEK_THRESHOLD :: 10
-find_most_pheromones :: proc(
-	ant: ^Ant,
-	neighborhood: Neighborhood,
-	grid: Grid,
-	pheromone: Pheromone,
-) -> rl.Vector2 {
-	most_pheromones: f32 = 0
-	best_index: i32 = -1
-	for index in neighborhood {
-		block, _ := get_block(grid, int(index))
-		pheromones_on_block := block.pheromones[pheromone]
-		if pheromones_on_block > most_pheromones {
-			most_pheromones = pheromones_on_block
-			best_index = index
-		}
-	}
-
-	if best_index == -1 || most_pheromones < PHEROMONE_SEEK_THRESHOLD {
-		return {-1, -1}
-	}
-
-	return get_world_position_from_block_index(best_index)
-}
-
-set_ant_state :: proc(ant: ^Ant, state: AntState) {
-	// If we are setting the state to an idle state, set a proper default idle_time_remaining
-	idle_state, ok := state.(AntState_Idle)
-	if (ok) {
-		if idle_state.idle_time_remaining == 0 {
-			idle_state.idle_time_remaining = ANT_IDLE_TIME + get_random_value_f(-0.1, 0.1)
-		}
-	}
-
-	ant.state = state
-}
-
-Grid_Cell_Position :: [2]i32
-
-// This is in block sizes
-DEFAULT_SEARCH_RADIUS :: 40
-DEFAULT_NUM_RAYS :: 10
-RAY_INCREMENT :: GRID_CELL_SIZE / 10.0
-
-get_neighborhood :: proc(
-	ant: Ant,
-	state: GameState,
-	radius: f32 = DEFAULT_SEARCH_RADIUS,
-	cone_degrees: f32 = 150, // 360 here would be full vision
-) -> (
-	neighborhood: Neighborhood,
-) {
-
-	origin_block_index := get_block_index(ant.pos)
-
-	for i in 0 ..< DEFAULT_NUM_RAYS {
-		angle := f32(i) * (cone_degrees / DEFAULT_NUM_RAYS) - (cone_degrees / 2)
-		direction := rl.Vector2Normalize(rl.Vector2Rotate(ant.direction, math.to_radians(angle)))
-
-		ray_position := ant.pos + (direction * RAY_INCREMENT)
-		distance: f32 = 0
-		for distance < DEFAULT_SEARCH_RADIUS {
-			ray_block_index := get_block_index(ray_position)
-			// TODO: Use a real raycasting algorithm that does not rely on pure naive chance... after the jam...
-			// Add all blocks touched by the ray in the set
-			if origin_block_index != ray_block_index {
-				neighborhood[ray_block_index] = {}
-				block, exists := get_block(state.grid, int(ray_block_index))
-				if exists && !is_block_permeable(block.type) {
-					// Block the ray if it hits a block that is impermeable
-					break
-				}
-			}
-			distance = rl.Vector2Distance(ant.pos, ray_position)
-			ray_position += (direction * RAY_INCREMENT)
-		}
-
-		when ODIN_DEBUG {
-			if debug_overlay {
-				rl.DrawLineV(ant.pos, ray_position, rl.PINK)
-			}
-		}
-	}
-
-	return
-}
-
-get_front_block :: proc(ant: Ant) -> (grid_position: Grid_Cell_Position) {
-	origin_block_index := get_block_index(ant.pos)
-
-	distance: f32 = 0
-	ray_position := ant.pos + (ant.direction * RAY_INCREMENT)
-	ray_block_index := get_block_index(ray_position)
-	for ray_block_index == origin_block_index {
-		ray_position += (ant.direction * RAY_INCREMENT)
-		ray_block_index = get_block_index(ray_position)
-	}
-	grid_position = {i32(ray_position.x / GRID_CELL_SIZE), i32(ray_position.y / GRID_CELL_SIZE)}
-
-	return
-}
-
-walk_ant :: proc(ant: ^Ant, grid: Grid) -> bool {
-	// Ensure there is nothing in the way
-	front_block_pos := get_front_block(ant^)
-	block, block_real := get_block(grid, expand_values(front_block_pos))
-
-	// Move forward if we're good 
-	if block_real && is_block_permeable(block.type) {
-		prev_pos := ant.pos
-		ant.pos += ant.direction * rl.GetFrameTime() * ant.speed
-		return true
-	}
-	// Otherwise we didn't move at all
-	return false
-}
 
 draw_ants :: proc(state: GameState) {
 	for ant in state.ants {
@@ -664,27 +494,39 @@ draw_ants :: proc(state: GameState) {
 	}
 }
 
-// For now just draw triangles 
+draw_creature :: proc(creature: Creature, metadata: CreatureMetadata) -> bool {
+	if creature.life_time < 0 {
+		// Creatures that haven't been born won't be drawn
+		return false
+	}
+
+	color := metadata.color
+	color.a = CREATURE_ALPHA
+
+	// Lower body 
+	rl.DrawCircleV(creature.pos, metadata.size / 2, color)
+	// Abdomen
+	rl.DrawCircleV(
+		creature.pos + (metadata.size * creature.direction / 2),
+		metadata.size / 4,
+		color,
+	)
+	// Head
+	rl.DrawCircleV(creature.pos + (metadata.size * creature.direction), metadata.size / 3, color)
+
+	return true
+}
+
 draw_ant :: proc(ant: Ant) {
-	if ant.life_time < 0 {
-		// Ants that haven't been born won't be drawn
+	ant_data := AntValues[ant.type]
+
+	if !draw_creature(ant, ant_data) {
 		return
 	}
 
-	ant_data := AntValues[ant.type]
 	if ant.selected {
 		rl.DrawCircleLinesV(ant.pos, ant_data.size, rl.WHITE)
 	}
-
-	ant_color := ant_data.color
-	ant_color.a = ANT_ALPHA
-
-	// Lower body 
-	rl.DrawCircleV(ant.pos, ant_data.size / 2, ant_color)
-	// Abdomen
-	rl.DrawCircleV(ant.pos + (ant_data.size * ant.direction / 2), ant_data.size / 4, ant_color)
-	// Head
-	rl.DrawCircleV(ant.pos + (ant_data.size * ant.direction), ant_data.size / 3, ant_color)
 
 	// Load if any
 	if (ant.load > 0) {
