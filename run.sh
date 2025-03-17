@@ -8,8 +8,10 @@ if [[ "$1" == "release" ]]; then
   BUILD_MODE="release"
 elif [[ "$1" == "debug" ]]; then
   BUILD_MODE="debug"
+elif [[ "$1" == "test" ]]; then
+  BUILD_MODE="test"
 else
-  echo "Usage: $0 [debug|release]"
+  echo "Usage: $0 [debug|release|test]"
   exit 1
 fi
 
@@ -23,13 +25,24 @@ if [[ "$BUILD_MODE" == "debug" ]]; then
 elif [[ "$BUILD_MODE" == "release" ]]; then
   echo "Building in release mode with optimizations..."
   odin build src/ -o:speed -out=./build/ants
+elif [[ "$BUILD_MODE" == "test" ]]; then
+  echo "Building in test mode..."
+  odin build src/ -debug -build-mode:test -out=./build/ants_test
 fi
 
 # Run the compiled program
-if [[ $? -eq 0 ]]; then
-  echo "Running the program..."
-  ./build/ants
-else
+if [ $? -ne 0 ]; then
   echo "Build failed."
   exit 1
+else
+  echo "Build succeeded."
+fi
+
+if [ "$2" == "run" ]; then 
+  echo "Running the program..."
+  if [[ "$BUILD_MODE" == "test" ]]; then
+    ./build/ants_test
+  else 
+    ./build/ants
+  fi
 fi
