@@ -5,6 +5,7 @@ import "core:math"
 import "core:reflect"
 import "core:strings"
 import "core:time"
+import "system"
 import rl "vendor:raylib"
 
 ANT_IDLE_TIME :: 0.300
@@ -25,7 +26,8 @@ Ant :: struct {
 	load:                     f32,
 	load_type:                EnvironmentType,
 	type:                     AntType,
-	state:                    AntState,
+	current_action:           system.Action(Ant_Action_Blackboard),
+	action_blackboard:        Ant_Action_Blackboard,
 	objective:                AntObjective,
 	selected:                 bool,
 }
@@ -84,26 +86,6 @@ AntValues := [AntType]AntMetadata {
 	},
 }
 
-AntState_Walk :: struct {
-	target_pos: rl.Vector2,
-}
-AntState_Idle :: struct {
-	idle_time_remaining: f32,
-}
-AntState_Fight :: struct {
-	enemy: ^Enemy,
-}
-AntState_Load :: struct {}
-AntState_Unload :: struct {}
-
-AntState :: union {
-	AntState_Idle, // Pause for a second and analyze the neighborhood 
-	AntState_Walk, // Walk forwards toward direction vector, with random variations
-	AntState_Fight, // Actively move towards an enemy and do damage to it
-	AntState_Load, // Load / unload supply
-	AntState_Unload, // Load / unload supply
-}
-
 AntObjective_Explore :: struct {}
 AntObjective_War :: struct {}
 AntObjective_Forage :: struct {
@@ -138,8 +120,6 @@ init_ant :: proc(type: AntType, nest: Nest) -> (ant: Ant) {
 	ant.life_time = ant_data.initial_life
 	ant.speed = ant_data.initial_speed
 	ant.objective = roll_ant_objective(nest)
-	// Default to the idle state
-	set_ant_state(&ant, AntState_Idle{})
 	return
 }
 
@@ -179,214 +159,14 @@ update_ants :: proc(state: ^GameState) {
 			continue
 		}
 
-		// If any enemies are in the area, immediately go into war mode
-		found_enemy := false
-		for enemy in state.enemies {
-			distance := rl.Vector2Distance(ant.pos, enemy.pos)
-			if distance < PURSUIT_DISTANCE {
-				found_enemy = true
-				break
-			}
-		}
+		// Update stale action blackboard variables 
+		ant.action_blackboard.creature = &ant
+		ant.action_blackboard.grid = state.grid
 
-		// TODO: Use pheromones and actually make this proper
-		if found_enemy {
-			set_ant_state(&ant, AntState_Fight{})
-		} else {
-			// _, is_at_war := ant.objective.(AntObjective_War)
-			// if is_at_war {
-			// 	// Stop warring if no enemies in sight
-			// 	ant.objective = roll_ant_objective(state.nest)
-			// 	set_ant_state(&ant, AntState_Idle{})
-			// }
-		}
-
-		// Handle ant states
-		switch &ant_state in ant.state {
-		case AntState_Walk:
-			if rl.Vector2Distance(ant_state.target_pos, ant.pos) <=
-			   min((GRID_CELL_SIZE / 2), ant_data.size) {
-				// If the ant has reached the target position, idle
-				set_ant_state(&ant, AntState_Idle{})
-				break
-			}
-
-			turn_creature(&ant, Direction.Forward)
-
-			// Lock the direction back in if the ant has strayed too far away from the target position
-			direction := rl.Vector2Normalize(ant_state.target_pos - ant.pos)
-			if abs(rl.Vector2Angle(ant.direction, direction)) > math.PI / 4 {
-				turn_creature(&ant, direction)
-			}
-
-			// If the ant was unable to walk due to an obstacle, idle
-			if !walk_creature(&ant, state.grid) {
-				set_ant_state(&ant, AntState_Idle{})
-			}
-
-		case AntState_Fight:
-			if found_enemy == false {
-				set_ant_state(&ant, AntState_Idle{})
-				break
-			}
-			for &enemy in state.enemies {
-				distance := rl.Vector2Distance(ant.pos, enemy.pos)
-				if distance < PURSUIT_DISTANCE {
-					turn_creature(&ant, rl.Vector2Normalize(enemy.pos - ant.pos))
-					walk_creature(&ant, state.grid)
-
-					if distance < ATTACK_DISTANCE {
-						enemy.health -= 1
-					}
-
-					break
-				}
-			}
-		case AntState_Load:
-			front_block_position := get_front_block(ant)
-			block := get_block_ptr(&state.grid, expand_values(front_block_position))
-
-			// If the ant is hauling, it's taking whatever block is in the middle
-			if (block.amount <= 0 || block.type == .Nothing) {
-				set_ant_state(&ant, AntState_Idle{})
-				break
-			}
-
-			ant.load_type = block.type
-
-			// Get a mutable m block as we need to modify the grid
-			amount := min(ant_data.load_speed * rl.GetFrameTime(), block.amount)
-			ant.load += amount
-			block.amount -= amount
-
-			try_spread_pheromone(&ant, &state.grid, .Forage)
-
-			// If the ant has exceeded its load limit, return it to idle 
-			if (ant_data.carrying_capacity != 0 && ant.load >= ant_data.carrying_capacity) {
-				set_ant_state(&ant, AntState_Idle{})
-			}
-		case AntState_Unload:
-			// The ant should not be in the unload state unless they are in nest
-			if (!is_in_nest(ant.pos)) {
-				set_ant_state(&ant, AntState_Idle{})
-				break
-			}
-
-			amount := min(ant_data.load_speed * rl.GetFrameTime(), ant.load)
-			state.nest.inventory[ant.load_type] += amount
-			ant.load -= amount
-
-			try_spread_pheromone(&ant, &state.grid, .General)
-
-			if ant.load <= 0 {
-				set_ant_state(&ant, AntState_Idle{})
-			}
-		case AntState_Idle:
-			// In the idle state, the ant has to make its major decisions 
-			// depending on its objective. If it has fulfilled its objective, it will be assigned a new one 
-			ant_state.idle_time_remaining -= rl.GetFrameTime()
-			front_block_index := get_front_block(ant)
-			front_block, exists := get_block(state.grid, expand_values(front_block_index))
-
-			// FIXME: There is an explicit coupling here, this system is not good
-			desired_block, is_searching := ant.objective.(AntObjective_Forage)
-			if is_searching {
-				if desired_block.forage_type != front_block.type &&
-				   !is_block_permeable(front_block.type) {
-					// Get out tha wayyyyy
-					turn_creature(&ant, Direction.Right)
-					ant_wander(&ant)
-				}
-			}
-
-
-			neighborhood := get_neighborhood(ant, state^)
-			defer delete(neighborhood)
-
-			if len(neighborhood) == 0 {
-				// The ant is in an impossible state!, remove it
-				ordered_remove(&state.ants, i)
-				continue
-			}
-
-			switch &ant_objective in ant.objective {
-			case AntObjective_Build:
-				// TODO: Implement building, but for now set the objective to forage 
-				ant.objective = AntObjective_Forage {
-					forage_type = .Honey,
-				}
-			case AntObjective_War:
-				// TODO: Actually engage any found enemies 
-				most_danger_pheromone_pos :=
-					find_most_pheromones(&ant, neighborhood, state.grid, .Danger) +
-					{GRID_CELL_SIZE / 2, GRID_CELL_SIZE / 2}
-				ant_walk_towards_pos(&ant, most_danger_pheromone_pos)
-			case AntObjective_Forage:
-				if ant_data.carrying_capacity == 0 || ant.load >= ant_data.carrying_capacity {
-					ant.objective = AntObjective_Return {
-						reason = .FullLoad,
-					}
-					set_ant_state(&ant, AntState_Walk{target_pos = NEST_POS})
-					break
-				}
-
-				front_block_position := get_front_block(ant)
-				block, block_exists := get_block(state.grid, expand_values(front_block_position))
-
-				// If we have successfully stopped in front of our forage type
-				if block_exists && block.type == ant_objective.forage_type {
-					// ensure we are in the loading state
-					ant.load_type = block.type
-					set_ant_state(&ant, AntState_Load{})
-				} else if block_exists && !is_block_permeable(block.type) {
-					// Edge case where we've idled because we hit a block
-				} else {
-					// FIXME: Don't recalculate the item neighborhood if we simply hit a wall
-					// otherwise seek the block in the neighborhood
-					item_pos :=
-						find_item(&ant, neighborhood, state.grid, ant_objective.forage_type) +
-						{GRID_CELL_SIZE / 2, GRID_CELL_SIZE / 2}
-					ant_walk_towards_pos(&ant, item_pos)
-				}
-			case AntObjective_Return:
-				if (is_in_nest(ant.pos)) {
-					if ant.load <= 0 {
-						// We have completed our return and are ready for a new objective.
-						assign_ant_new_objective(&ant, state.nest)
-						break
-					}
-
-					// Otherwise we need to ensure we are in the unload ant state
-					set_ant_state(&ant, AntState_Unload{})
-					break
-				}
-
-				// If we are not at the nest, we should return, placing pheromones along the way depending on why we returned
-				// general_pheromone_pos := find_most_pheromones(
-				// 	&ant,
-				// 	neighborhood,
-				// 	state.grid,
-				// 	.General,
-				// ) +
-				// {GRID_CELL_SIZE / 2, GRID_CELL_SIZE / 2}
-				// ant_walk_towards_pos(&ant, general_pheromone_pos)
-
-				// TODO: Somehow following the general pheromones has to work a bit better
-				// For now this cheat will make things a lot smoother
-				ant_walk_towards_pos(&ant, NEST_POS)
-
-				pheromone: Pheromone
-				switch ant_objective.reason {
-				case .Danger:
-					pheromone = .Danger
-				case .FullLoad:
-					pheromone = .Forage
-				}
-				try_spread_pheromone(&ant, &state.grid, pheromone)
-			case AntObjective_Explore:
-				// TODO: Exploring ants can be drafted for war or building at any time
-				ant_wander(&ant)
-			}
+		if ant.current_action == nil || system.update_action(ant.current_action) == .Succeeded {
+			ant.action_blackboard.target_location = ant.pos + get_random_vec(-20, 20)
+			ant.current_action = Walk_Action(&ant.action_blackboard)
+			// For now wander aimlessly
 		}
 
 		// Update timers
@@ -425,37 +205,10 @@ update_ants :: proc(state: ^GameState) {
 	}
 }
 
-set_ant_state :: proc(ant: ^Ant, state: AntState) {
-	// If we are setting the state to an idle state, set a proper default idle_time_remaining
-	idle_state, ok := state.(AntState_Idle)
-	if (ok) {
-		if idle_state.idle_time_remaining == 0 {
-			idle_state.idle_time_remaining = ANT_IDLE_TIME + get_random_value_f(-0.1, 0.1)
-		}
-	}
-
-	ant.state = state
-}
-
-ant_wander :: proc(ant: ^Ant) {
-	// Walk some random distance
-	random_pos := ant.pos + ant.direction * get_random_value_f(3, 20)
-	set_ant_state(ant, AntState_Walk{target_pos = random_pos})
-}
-
-ant_walk_towards_pos :: proc(ant: ^Ant, pos: rl.Vector2) {
-	if pos == {-1, -1} {
-		ant_wander(ant)
-	} else {
-		set_ant_state(ant, AntState_Walk{target_pos = pos})
-	}
-}
-
 assign_ant_new_objective :: proc(ant: ^Ant, nest: Nest) {
 	new_ant_objective := roll_ant_objective(nest)
 	ant.objective = new_ant_objective
 }
-
 
 draw_ants :: proc(state: GameState) {
 	for ant in state.ants {
@@ -478,17 +231,6 @@ draw_ants :: proc(state: GameState) {
 				color := rl.YELLOW
 				color.a = 100
 				rl.DrawRectangle(pos.x, pos.y, GRID_CELL_SIZE, GRID_CELL_SIZE, color)
-
-
-				when ODIN_DEBUG {
-					if debug_overlay {
-						walk, walking := ant.state.(AntState_Walk)
-						if walking {
-							rl.DrawCircleV(walk.target_pos, 1, rl.SKYBLUE)
-						}
-					}
-				}
-
 			}
 		}
 	}

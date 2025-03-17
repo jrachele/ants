@@ -7,16 +7,22 @@ import rl "vendor:raylib"
 
 
 Action_Simple :: struct($Blackboard: typeid) {
+	// Name for logging / debugging
+	name:       string,
+
 	// Context within which the action is performed
-	blackboard: Blackboard,
+	blackboard: ^Blackboard,
 
 	// This function will perform actual work on the mutable blackboard
 	work:       proc(_: ^Blackboard),
 }
 
 Action_Complex :: struct($Blackboard: typeid) {
+	// Name for logging / debugging
+	name:           string,
+
 	// Context within which the action is performed
-	blackboard:     Blackboard,
+	blackboard:     ^Blackboard,
 
 	// Must qualify for the pre-condition for the action to occur
 	pre_condition:  proc(_: Blackboard) -> bool,
@@ -26,7 +32,7 @@ Action_Complex :: struct($Blackboard: typeid) {
 
 	// Actions can have child actions that must be called to satisfy the main action
 	// They are passed in as generator functions to generate them on demand
-	children:       []proc(_: Blackboard) -> Action(Blackboard),
+	children:       []proc(_: ^Blackboard) -> Action(Blackboard),
 
 	// The status of the current action
 	status:         Action_Status,
@@ -48,30 +54,29 @@ DEFAULT_ACTION_TIMEOUT :: 1 * time.Second
 DEFAULT_ACTION_MAX_DEPTH :: 64
 
 update_action :: proc(action_base: Action($T), depth := 0) -> Action_Status {
-	if depth >= DEFAULT_ACTION_MAX_DEPTH {
-		return .Failed
-	}
 
 	// TODO: Use a stack and do it iteratively instead of recursively potentially
 	switch &action in action_base {
 	case Action_Simple(T):
 		// Just execute the action with the given blackboard
-		action.work(&action.blackboard)
+		action.work(action.blackboard)
 		return .Succeeded
 	case Action_Complex(T):
+		if depth >= DEFAULT_ACTION_MAX_DEPTH {
+			fmt.eprintfln("Action reached max depth! %s", action.name)
+			return .Failed
+		}
+
 		// Ensure the conditions are satisfied and run sub-actions
-		if action.post_condition(action.blackboard) {
+		if action.post_condition(action.blackboard^) {
 			return .Succeeded
 		}
-		if action.pre_condition(action.blackboard) {
-			// This should not be the case if the post condition is not met 
-			if len(action.children) == 0 {
-				return .Failed
-			}
-
+		if action.pre_condition(action.blackboard^) {
+			// Ensure subchildren get their own blackboard
+			children_blackboard := action.blackboard^
 			for sub_action_generator in action.children {
 				// Generate a new action here with a separate blackboard 
-				sub_action := sub_action_generator(action.blackboard)
+				sub_action := sub_action_generator(&children_blackboard)
 				// Go through as many sub actions as possible, earlying out if we fail or are pending
 				switch update_action(sub_action, depth + 1) {
 				case .Failed:
@@ -89,12 +94,19 @@ update_action :: proc(action_base: Action($T), depth := 0) -> Action_Status {
 }
 
 // Executes an action synchronously, returning true if it succeeded, and false if it failed or timed out
-execute_action :: proc(action: Action($T), timeout := DEFAULT_ACTION_TIMEOUT) -> bool {
+execute_action :: proc(
+	action: Action($T),
+	timeout := DEFAULT_ACTION_TIMEOUT,
+) -> (
+	steps: int,
+	succeeded: bool,
+) {
 	status := Action_Status.Pending
 	stopwatch := time.Stopwatch{}
 	time.stopwatch_start(&stopwatch)
 	for status == .Pending {
 		status = update_action(action)
+		steps += 1
 
 		if time.stopwatch_duration(stopwatch) >= DEFAULT_ACTION_TIMEOUT {
 			fmt.eprintfln("Action timed out! %v", action)
@@ -102,5 +114,5 @@ execute_action :: proc(action: Action($T), timeout := DEFAULT_ACTION_TIMEOUT) ->
 		}
 	}
 
-	return status == .Succeeded
+	return steps, status == .Succeeded
 }
