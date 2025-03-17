@@ -165,7 +165,7 @@ get_world_position_from_block_index :: proc(index: i32) -> rl.Vector2 {
 	return rl.Vector2{f32(grid_position.x), f32(grid_position.y)} * GRID_CELL_SIZE
 }
 
-init_grid :: proc() -> (grid: Grid) {
+init_grid :: proc(allocator := context.allocator) -> (grid: Grid) {
 	resize(&grid.data, GRID_WIDTH * GRID_HEIGHT)
 	for y in 0 ..< i32(GRID_HEIGHT) {
 		for x in 0 ..< i32(GRID_WIDTH) {
