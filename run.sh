@@ -27,7 +27,7 @@ elif [[ "$BUILD_MODE" == "release" ]]; then
   odin build src/ -o:speed -out=./build/ants
 elif [[ "$BUILD_MODE" == "test" ]]; then
   echo "Building in test mode..."
-  odin build src/ -debug -build-mode:test -out=./build/ants_test
+  ~/code/odin/Odin/odin build src/ -debug -build-mode:test -out=./build/ants_test
 fi
 
 # Run the compiled program
