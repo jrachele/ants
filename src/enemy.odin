@@ -4,11 +4,11 @@ import "core:math"
 import rl "vendor:raylib"
 
 Enemy :: struct {
-	using creature: Creature,
+	using entity: Entity,
 }
 
 EnemyMetadata :: struct {
-	using creature_meta: CreatureMetadata,
+	using entity_meta: EntityMetadata,
 }
 
 Default_Enemy :: EnemyMetadata {
@@ -61,8 +61,8 @@ update_enemies :: proc(state: ^GameState) {
 		}
 
 		// TODO: Make enemies look realistic and shit
-		if !walk_creature(&enemy, state.grid) {
-			turn_creature(&enemy, Direction.Right)
+		if !walk_entity(&enemy, state.grid) {
+			turn_entity(&enemy, Direction.Right)
 		} else {
 			enemy.direction = rl.Vector2Normalize(
 				rl.Vector2Rotate(NEST_POS - enemy.pos, get_random_value_f(-0.05, 0.05)),
@@ -73,6 +73,6 @@ update_enemies :: proc(state: ^GameState) {
 
 draw_enemies :: proc(state: GameState) {
 	for enemy in state.enemies {
-		draw_creature(enemy, Default_Enemy)
+		draw_entity(enemy, Default_Enemy)
 	}
 }

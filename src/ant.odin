@@ -5,7 +5,6 @@ import "core:math"
 import "core:reflect"
 import "core:strings"
 import "core:time"
-import "system"
 import rl "vendor:raylib"
 
 ANT_IDLE_TIME :: 0.300
@@ -21,22 +20,20 @@ AntType :: enum {
 }
 
 Ant :: struct {
-	using creature:           Creature,
+	using entity:             Entity,
 	pheromone_time_remaining: f32,
 	load:                     f32,
 	load_type:                EnvironmentType,
 	type:                     AntType,
-	current_action:           system.Action(Ant_Action_Blackboard),
-	action_blackboard:        Ant_Action_Blackboard,
 	objective:                AntObjective,
 	selected:                 bool,
 }
 
 AntMetadata :: struct {
-	using creature_meta: CreatureMetadata,
-	carrying_capacity:   f32,
-	spawn_cost:          f32,
-	load_speed:          f32,
+	using entity_meta: EntityMetadata,
+	carrying_capacity: f32,
+	spawn_cost:        f32,
+	load_speed:        f32,
 }
 
 AntValues := [AntType]AntMetadata {
@@ -159,14 +156,30 @@ update_ants :: proc(state: ^GameState) {
 			continue
 		}
 
-		// Update stale action blackboard variables 
-		ant.action_blackboard.creature = &ant
-		ant.action_blackboard.grid = state.grid
+		#partial switch objective in ant.objective {
+		case AntObjective_Forage:
+			if has_no_actions(ant) {
+				// If we have no actions, queue up the set of foraging actions 
+				// queue_action_sequence(
+				// 	&ant,
+				// 	{
+				// 		Action_Find{environment = &state.grid, item = objective.forage_type},
+				// 		Action_Haul{environment = &state.grid, item = objective.forage_type},
+				// 		Action_Return{environment = &state.grid},
+				// 	},
+				// )
+				queue_action(
+					&ant,
+					Action_Walk {
+						environment = &state.grid,
+						walk_to = ant.pos + get_random_vec(-10, 10),
+					},
+				)
+			}
+		}
 
-		if ant.current_action == nil || system.update_action(ant.current_action) == .Succeeded {
-			ant.action_blackboard.target_location = ant.pos + get_random_vec(-20, 20)
-			ant.current_action = Walk_Action(&ant.action_blackboard)
-			// For now wander aimlessly
+		if tick(&ant) == .Succeeded {
+			// TODO: Fetch new objective potentially
 		}
 
 		// Update timers
@@ -197,7 +210,7 @@ update_ants :: proc(state: ^GameState) {
 		inventory[.Honey] -= AntValues[spawn_type].spawn_cost
 		spawn_ant(state, spawn_type)
 
-		// TODO: Move spawning of all creatures somewhere else 
+		// TODO: Move spawning of all entitys somewhere else 
 		spawn_enemy(state)
 
 		time.stopwatch_reset(&state.timer)
@@ -236,25 +249,21 @@ draw_ants :: proc(state: GameState) {
 	}
 }
 
-draw_creature :: proc(creature: Creature, metadata: CreatureMetadata) -> bool {
-	if creature.life_time < 0 {
-		// Creatures that haven't been born won't be drawn
+draw_entity :: proc(entity: Entity, metadata: EntityMetadata) -> bool {
+	if entity.life_time < 0 {
+		// Entities that haven't been born won't be drawn
 		return false
 	}
 
 	color := metadata.color
-	color.a = CREATURE_ALPHA
+	color.a = ENTITY_ALPHA
 
 	// Lower body 
-	rl.DrawCircleV(creature.pos, metadata.size / 2, color)
+	rl.DrawCircleV(entity.pos, metadata.size / 2, color)
 	// Abdomen
-	rl.DrawCircleV(
-		creature.pos + (metadata.size * creature.direction / 2),
-		metadata.size / 4,
-		color,
-	)
+	rl.DrawCircleV(entity.pos + (metadata.size * entity.direction / 2), metadata.size / 4, color)
 	// Head
-	rl.DrawCircleV(creature.pos + (metadata.size * creature.direction), metadata.size / 3, color)
+	rl.DrawCircleV(entity.pos + (metadata.size * entity.direction), metadata.size / 3, color)
 
 	return true
 }
@@ -262,7 +271,7 @@ draw_creature :: proc(creature: Creature, metadata: CreatureMetadata) -> bool {
 draw_ant :: proc(ant: Ant) {
 	ant_data := AntValues[ant.type]
 
-	if !draw_creature(ant, ant_data) {
+	if !draw_entity(ant, ant_data) {
 		return
 	}
 

@@ -22,6 +22,10 @@ get_random_vec :: proc(min, max: f32) -> rl.Vector2 {
 	return {get_random_value_f(min, max), get_random_value_f(min, max)}
 }
 
+flip_coin :: proc() -> bool {
+	return rl.GetRandomValue(0, 1) == 0
+}
+
 draw_text_align :: proc(
 	font: rl.Font,
 	text: string,

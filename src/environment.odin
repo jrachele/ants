@@ -125,14 +125,14 @@ get_neighborhood :: proc(
 	return
 }
 
-get_front_block :: proc(creature: Creature) -> (grid_position: Grid_Cell_Position) {
-	origin_block_index := get_block_index(creature.pos)
+get_front_block :: proc(entity: Entity) -> (grid_position: Grid_Cell_Position) {
+	origin_block_index := get_block_index(entity.pos)
 
 	distance: f32 = 0
-	ray_position := creature.pos + (creature.direction * RAY_INCREMENT)
+	ray_position := entity.pos + (entity.direction * RAY_INCREMENT)
 	ray_block_index := get_block_index(ray_position)
 	for ray_block_index == origin_block_index {
-		ray_position += (creature.direction * RAY_INCREMENT)
+		ray_position += (entity.direction * RAY_INCREMENT)
 		ray_block_index = get_block_index(ray_position)
 	}
 	grid_position = {i32(ray_position.x / GRID_CELL_SIZE), i32(ray_position.y / GRID_CELL_SIZE)}

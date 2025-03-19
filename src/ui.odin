@@ -7,7 +7,6 @@ import "core:fmt"
 import "core:mem"
 import "core:reflect"
 import "core:strings"
-import "system"
 import rl "vendor:raylib"
 
 error_handler :: proc "c" (errorData: clay.ErrorData) {
@@ -197,12 +196,6 @@ draw_clay :: proc(state: GameState) {
 				if len(selected_ants) > 0 {
 					ant := selected_ants[0]
 					action := ""
-					switch a in ant.current_action {
-					case system.Action_Simple(Ant_Action_Blackboard):
-						action = a.name
-					case system.Action_Complex(Ant_Action_Blackboard):
-						action = a.name
-					}
 
 					info := fmt.aprintfln(
 						"%v\n%v\n%v\nLD: %.2f (%v)\nPH:%.2fs\n",
