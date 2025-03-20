@@ -45,34 +45,3 @@ spawn_enemy :: proc(state: ^GameState, immediately: bool = false) {
 
 	append(&state.enemies, enemy)
 }
-
-update_enemies :: proc(state: ^GameState) {
-	if state.paused do return
-	for &enemy, i in state.enemies {
-		if enemy.health <= 0 {
-			ordered_remove(&state.enemies, i)
-			continue
-		}
-		if is_in_nest(enemy.pos) {
-			// Deal damage to the nest 
-			state.nest.health -= 1
-			ordered_remove(&state.enemies, i)
-			continue
-		}
-
-		// TODO: Make enemies look realistic and shit
-		if !walk_entity(&enemy, state.grid) {
-			turn_entity(&enemy, Direction.Right)
-		} else {
-			enemy.direction = rl.Vector2Normalize(
-				rl.Vector2Rotate(NEST_POS - enemy.pos, get_random_value_f(-0.05, 0.05)),
-			)
-		}
-	}
-}
-
-draw_enemies :: proc(state: GameState) {
-	for enemy in state.enemies {
-		draw_entity(enemy, Default_Enemy)
-	}
-}

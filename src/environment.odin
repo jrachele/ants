@@ -6,7 +6,7 @@ import rl "vendor:raylib"
 ANT_PHEROMONE_RATE :: 1.0
 try_spread_pheromone :: proc(ant: ^Ant, grid: ^Grid, pheromone: Pheromone) -> bool {
 	if ant.pheromone_time_remaining <= 0 {
-		block := get_block_ptr(grid, ant.pos)
+		block := get_block_ptr_from_world_position(grid, ant.pos)
 		if block != nil && block.pheromones[pheromone] != 255 {
 			block.pheromones[pheromone] += 1
 		}
@@ -30,12 +30,12 @@ find_item :: proc(
 	grid: Grid,
 	block_type: EnvironmentType,
 ) -> rl.Vector2 {
-	best_index: i32 = -1
+	best_index: int = -1
 	best_distance: f32
 	for index in neighborhood {
-		block, _ := get_block(grid, int(index))
+		block, _ := get_block_from_index(grid, index)
 		if block.type == block_type {
-			block_position := get_world_position_from_block_index(index)
+			block_position := to_world_position(index)
 			block_distance := rl.Vector2Distance(ant.pos, block_position)
 			if best_index == -1 || block_distance < best_distance {
 				best_index = index
@@ -48,7 +48,7 @@ find_item :: proc(
 		return {-1, -1}
 	}
 
-	return get_world_position_from_block_index(best_index)
+	return to_world_position(best_index)
 }
 
 // Any blocks with a pheromone count below this will not be considered by the ant 
@@ -60,7 +60,7 @@ find_most_pheromones :: proc(
 	pheromone: Pheromone,
 ) -> rl.Vector2 {
 	most_pheromones: f32 = 0
-	best_index: i32 = -1
+	best_index: int = -1
 	for index in neighborhood {
 		block, _ := get_block(grid, int(index))
 		pheromones_on_block := block.pheromones[pheromone]
@@ -74,7 +74,7 @@ find_most_pheromones :: proc(
 		return {-1, -1}
 	}
 
-	return get_world_position_from_block_index(best_index)
+	return to_world_position(best_index)
 }
 
 // This is in block sizes
@@ -91,7 +91,7 @@ get_neighborhood :: proc(
 	neighborhood: Neighborhood,
 ) {
 
-	origin_block_index := get_block_index(ant.pos)
+	origin_block_index := to_index(ant.pos)
 
 	for i in 0 ..< DEFAULT_NUM_RAYS {
 		angle := f32(i) * (cone_degrees / DEFAULT_NUM_RAYS) - (cone_degrees / 2)
@@ -100,12 +100,12 @@ get_neighborhood :: proc(
 		ray_position := ant.pos + (direction * RAY_INCREMENT)
 		distance: f32 = 0
 		for distance < DEFAULT_SEARCH_RADIUS {
-			ray_block_index := get_block_index(ray_position)
+			ray_block_index := to_index(ray_position)
 			// TODO: Use a real raycasting algorithm that does not rely on pure naive chance... after the jam...
 			// Add all blocks touched by the ray in the set
 			if origin_block_index != ray_block_index {
 				neighborhood[ray_block_index] = {}
-				block, exists := get_block(state.grid, int(ray_block_index))
+				block, exists := get_block(state.grid, ray_block_index)
 				if exists && !is_block_permeable(block.type) {
 					// Block the ray if it hits a block that is impermeable
 					break
@@ -126,14 +126,14 @@ get_neighborhood :: proc(
 }
 
 get_front_block :: proc(entity: Entity) -> (grid_position: Grid_Cell_Position) {
-	origin_block_index := get_block_index(entity.pos)
+	origin_block_index := to_index(entity.pos)
 
 	distance: f32 = 0
 	ray_position := entity.pos + (entity.direction * RAY_INCREMENT)
-	ray_block_index := get_block_index(ray_position)
+	ray_block_index := to_index(ray_position)
 	for ray_block_index == origin_block_index {
 		ray_position += (entity.direction * RAY_INCREMENT)
-		ray_block_index = get_block_index(ray_position)
+		ray_block_index = to_index(ray_position)
 	}
 	grid_position = {i32(ray_position.x / GRID_CELL_SIZE), i32(ray_position.y / GRID_CELL_SIZE)}
 

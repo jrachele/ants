@@ -209,7 +209,7 @@ draw_clay :: proc(state: GameState) {
 					sidebar_item_component(u32(len(ant_counts)), info)
 				}
 
-				if state.grid.selected_block != INVALID_BLOCK_POSITION {
+				if state.grid.selected_block_position != INVALID_BLOCK_POSITION {
 					block, ok := get_selected_block(state.grid)
 					if !ok {
 						return

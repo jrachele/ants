@@ -1,5 +1,6 @@
 package ants
 
+import sm "core:container/small_array"
 import "core:fmt"
 import "core:math"
 import "core:reflect"
@@ -234,7 +235,7 @@ draw_ants :: proc(state: GameState) {
 				defer delete(neighborhood)
 
 				for index in neighborhood {
-					pos := get_world_position_from_block_index(index)
+					pos := to_world_position(index)
 					color := rl.RED
 					color.a = 50
 					rl.DrawRectangleV(pos, GRID_CELL_SIZE, color)
@@ -277,6 +278,7 @@ draw_ant :: proc(ant: Ant) {
 
 	if ant.selected {
 		rl.DrawCircleLinesV(ant.pos, ant_data.size, rl.WHITE)
+		draw_ant_data(ant)
 	}
 
 	// Load if any
@@ -295,17 +297,27 @@ draw_ant_data :: proc(ant: Ant) {
 	strings.builder_init(&sb)
 	defer strings.builder_destroy(&sb)
 
+	fmt.sbprintfln(&sb, "%v", ant.type)
 	ant_data := AntValues[ant.type]
-	// TODO: Draw health bar
-	if ant.life_time < 0 {
-		fmt.sbprintfln(&sb, "%v (%.2fs)", ant.type, ant.life_time * -1.0)
+	when ODIN_DEBUG {
+		for i in 0 ..< sm.len(ant.actions) {
+			action := sm.get(ant.actions, i)
+			fmt_action(strings.to_writer(&sb), action)
+		}
 	} else {
-		fmt.sbprintfln(&sb, "%v", ant.type)
+		if current_action, ok := peek_current_action(ant); ok {
+			fmt_action(strings.to_writer(&sb), current_action)
+		}
 	}
 
-	when ODIN_DEBUG {
-		fmt.sbprintfln(&sb, "%v", ant)
-	}
+	fmt.sbprintfln(
+		&sb,
+		"%v\nLD: %.2f (%v)\nPH:%.2fs\n",
+		ant.objective,
+		ant.load,
+		ant.load_type,
+		ant.pheromone_time_remaining,
+	)
 
 	label_str := strings.to_string(sb)
 

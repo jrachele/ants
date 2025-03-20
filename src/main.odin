@@ -163,7 +163,6 @@ update :: proc(state: ^GameState) {
 		}
 		update_grid(state)
 		update_ants(state)
-		update_enemies(state)
 		update_hud()
 	}
 }
@@ -224,7 +223,7 @@ draw_game :: proc(state: ^GameState) {
 
 	// Draw the selected block 
 	// TODO: Move this someplace appropriate
-	selected_index := state.grid.selected_block
+	selected_index := state.grid.selected_block_position
 	if selected_index != INVALID_BLOCK_POSITION {
 		rl.DrawRectangleRoundedLines(
 			{
@@ -240,6 +239,5 @@ draw_game :: proc(state: ^GameState) {
 	}
 
 	draw_ants(state^)
-	draw_enemies(state^)
 	draw_nest(state.nest)
 }
