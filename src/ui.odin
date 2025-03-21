@@ -16,29 +16,26 @@ error_handler :: proc "c" (errorData: clay.ErrorData) {
 	fmt.println("[Clay] Error! %v: %s", errorType, errorText)
 }
 
-// Example measure text function
-measure_text :: proc "c" (
-	text: clay.StringSlice,
-	config: ^clay.TextElementConfig,
-	userData: rawptr,
-) -> clay.Dimensions {
-	// clay.TextElementConfig contains members such as fontId, fontSize, letterSpacing, etc..
-	// Note: clay.String->chars is not guaranteed to be null terminated
-	return {width = f32(text.length * i32(config.fontSize)), height = f32(config.fontSize)}
-}
-
-init_hud :: proc(clay_memory: ^[^]u8) {
+init_hud :: proc(clay_memory: ^[^]u8, window_width: f32, window_height: f32) {
 	min_memory_size: u32 = clay.MinMemorySize()
 	clay_memory^ = make([^]u8, min_memory_size)
 	arena: clay.Arena = clay.CreateArenaWithCapacityAndMemory(uint(min_memory_size), clay_memory^)
 	clay.Initialize(
 		arena,
-		{width = WINDOW_WIDTH, height = WINDOW_HEIGHT},
+		{width = window_width, height = window_height},
 		{handler = error_handler},
 	)
 
 	// Tell clay how to measure text
-	clay.SetMeasureTextFunction(measure_text, nil)
+	clay.SetMeasureTextFunction(renderer.measureText, nil)
+
+	// Load fonts for the clay renderer
+	for font in Fonts {
+		renderer.raylibFonts[font] = {
+			fontId = u16(font),
+			font   = assets.fonts[font],
+		}
+	}
 }
 
 update_hud :: proc() {
@@ -46,12 +43,6 @@ update_hud :: proc() {
 	mouse_pos := rl.GetMousePosition()
 	clay.SetPointerState(clay.Vector2{mouse_pos.x, mouse_pos.y}, rl.IsMouseButtonDown(.LEFT))
 }
-
-// Define some colors.
-COLOR_LIGHT :: clay.Color{224, 215, 210, 255}
-COLOR_RED :: clay.Color{168, 66, 28, 255}
-COLOR_ORANGE :: clay.Color{225, 138, 50, 255}
-COLOR_BLACK :: clay.Color{0, 0, 0, 255}
 
 // Layout config is just a struct that can be declared statically, or inline
 sidebar_item_layout := clay.LayoutConfig {
@@ -72,11 +63,11 @@ sidebar_item_component :: proc(index: u32, text: string) {
 			text,
 			clay.TextConfig(
 				{
-					textColor = COLOR_BLACK,
-					fontSize = 24,
+					// textColor = Colors[.Black],
+					fontSize      = 24,
 					textAlignment = .Center,
 					letterSpacing = 10,
-					wrapMode = .None,
+					wrapMode      = .None,
 				},
 			),
 		)
@@ -84,14 +75,14 @@ sidebar_item_component :: proc(index: u32, text: string) {
 }
 
 // An example function to create your layout tree
-draw_clay :: proc(state: GameState) {
+draw_clay :: proc(data: GameData) {
 	ant_counts: [AntType]int
 
-	for ant in state.ants {
+	for ant in data.ants {
 		ant_counts[ant.type] += 1
 	}
 
-	inventory := state.nest.inventory
+	inventory := data.nest.inventory
 
 	CLAY_ARENA_SIZE :: 4196
 	render_buf := make([]u8, CLAY_ARENA_SIZE)
@@ -158,7 +149,7 @@ draw_clay :: proc(state: GameState) {
 				backgroundColor = {0, 0, 0, 0},
 			},
 			) {
-				if state.paused {
+				if data.paused {
 					clay.Text(
 						"PAUSED",
 						clay.TextConfig(
@@ -175,7 +166,7 @@ draw_clay :: proc(state: GameState) {
 
 			selected_ants: [dynamic]Ant
 			defer delete(selected_ants)
-			for ant in state.ants {
+			for ant in data.ants {
 				if ant.selected {
 					append(&selected_ants, ant)
 				}
@@ -209,8 +200,8 @@ draw_clay :: proc(state: GameState) {
 					sidebar_item_component(u32(len(ant_counts)), info)
 				}
 
-				if state.grid.selected_block_position != INVALID_BLOCK_POSITION {
-					block, ok := get_selected_block(state.grid)
+				if data.grid.selected_block_position != INVALID_BLOCK_POSITION {
+					block, ok := get_selected_block(data.grid)
 					if !ok {
 						return
 					}
@@ -235,8 +226,8 @@ draw_clay :: proc(state: GameState) {
 	}
 }
 
-draw_hud :: proc(state: GameState) {
-	draw_clay(state)
+draw_hud :: proc(data: GameData) {
+	draw_clay(data)
 
 	// Miscellaneous stuff that doesn't need clay
 	// Draw FPS 

@@ -35,21 +35,25 @@ draw_text_align :: proc(
 	font_size: i32,
 	color: rl.Color,
 ) {
+	font_size := f32(font_size)
+	x := f32(x)
+	y := f32(y)
+
 	text_cstr := strings.clone_to_cstring(text)
 	defer delete(text_cstr)
 
-	x := x
-	text_size := rl.MeasureText(text_cstr, font_size)
+	text_size := rl.MeasureTextEx(font, text_cstr, font_size, 0)
+	position := rl.Vector2{x, y}
 	switch (alignment) {
 	case .Left:
 	// Keep it the same
 	case .Center:
-		x -= (text_size / 2)
+		position -= text_size / 2
 	case .Right:
-		x -= text_size
+		position -= text_size
 	}
 
-	rl.DrawText(text_cstr, x, y, font_size, color)
+	rl.DrawTextEx(font, text_cstr, position, font_size, 0, color)
 }
 
 

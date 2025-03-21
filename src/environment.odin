@@ -84,7 +84,7 @@ RAY_INCREMENT :: GRID_CELL_SIZE / 10.0
 
 get_neighborhood :: proc(
 	ant: Ant,
-	state: GameState,
+	data: GameData,
 	radius: f32 = DEFAULT_SEARCH_RADIUS,
 	cone_degrees: f32 = 150, // 360 here would be full vision
 ) -> (
@@ -105,7 +105,7 @@ get_neighborhood :: proc(
 			// Add all blocks touched by the ray in the set
 			if origin_block_index != ray_block_index {
 				neighborhood[ray_block_index] = {}
-				block, exists := get_block(state.grid, ray_block_index)
+				block, exists := get_block(data.grid, ray_block_index)
 				if exists && !is_block_permeable(block.type) {
 					// Block the ray if it hits a block that is impermeable
 					break

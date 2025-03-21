@@ -248,9 +248,9 @@ PHEROMONE_DECAY_COEFFICIENT :: 0.97
 // Each tick of the diffusion, set the blocks around the current block to this amount of its pheromones
 PHEROMONE_DIFFUSION_COEFFICIENT :: 0.01
 
-update_grid :: proc(state: ^GameState) {
+update_grid :: proc(data: ^GameData) {
 	mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
-	grid := &state.grid
+	grid := &data.grid
 	if (rl.IsMouseButtonPressed(.LEFT)) {
 		selected_block_position := get_block_position_from_world_position(mouse_pos)
 		if grid.selected_block_position == selected_block_position {
@@ -265,7 +265,7 @@ update_grid :: proc(state: ^GameState) {
 		}
 	}
 
-	if state.paused do return
+	if data.paused do return
 
 	diffused_pheromones := false
 	for i in 0 ..< len(grid.data) {

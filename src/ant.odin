@@ -121,29 +121,29 @@ init_ant :: proc(type: AntType, nest: Nest) -> (ant: Ant) {
 	return
 }
 
-spawn_ant :: proc(state: ^GameState, type: AntType = AntType.Peon, immediately: bool = false) {
-	ant := init_ant(type, state.nest)
+spawn_ant :: proc(data: ^GameData, type: AntType = AntType.Peon, immediately: bool = false) {
+	ant := init_ant(type, data.nest)
 	if immediately {
 		ant.life_time = 0
 	}
 
-	append(&state.ants, ant)
+	append(&data.ants, ant)
 }
 
 ATTACK_DISTANCE :: 5
 PURSUIT_DISTANCE :: 20
 
-update_ants :: proc(state: ^GameState) {
+update_ants :: proc(data: ^GameData) {
 	mouse_pos := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
-	for &ant in state.ants {
+	for &ant in data.ants {
 		ant_data := AntValues[ant.type]
 		if ant.life_time < 0 do continue
 		ant.selected = rl.Vector2Distance(mouse_pos, ant.pos) < ant_data.size
 	}
 
-	if state.paused do return
+	if data.paused do return
 
-	for &ant, i in state.ants {
+	for &ant, i in data.ants {
 		ant_data := AntValues[ant.type]
 
 		ant.life_time += rl.GetFrameTime()
@@ -153,7 +153,7 @@ update_ants :: proc(state: ^GameState) {
 		}
 
 		if (ant.health < 0) {
-			ordered_remove(&state.ants, i)
+			ordered_remove(&data.ants, i)
 			continue
 		}
 
@@ -164,16 +164,19 @@ update_ants :: proc(state: ^GameState) {
 				// queue_action_sequence(
 				// 	&ant,
 				// 	{
-				// 		Action_Find{environment = &state.grid, item = objective.forage_type},
-				// 		Action_Haul{environment = &state.grid, item = objective.forage_type},
-				// 		Action_Return{environment = &state.grid},
+				// 		Action_Find{environment = &data.grid, item = objective.forage_type},
+				// 		Action_Haul{environment = &data.grid, item = objective.forage_type},
+				// 		Action_Return{environment = &data.grid},
 				// 	},
 				// )
+				offset := get_random_value_f(-math.PI / 6, math.PI / 6)
+				distance := get_random_value_f(4, 6)
+
 				queue_action(
 					&ant,
 					Action_Walk {
-						environment = &state.grid,
-						walk_to = ant.pos + get_random_vec(-10, 10),
+						environment = &data.grid,
+						walk_to = ant.pos + (rl.Vector2Rotate(ant.direction, offset) * distance),
 					},
 				)
 			}
@@ -189,8 +192,8 @@ update_ants :: proc(state: ^GameState) {
 
 	// Spawn ants here 
 	// TODO: Remove the spawn timer and make something more flexible 
-	if time.stopwatch_duration(state.timer) > ANT_SPAWN_RATE * time.Millisecond {
-		inventory := &state.nest.inventory
+	if time.stopwatch_duration(data.timer) > ANT_SPAWN_RATE * time.Millisecond {
+		inventory := &data.nest.inventory
 
 		possible_spawn := -1 // 0 -> peon
 		for type in AntType {
@@ -209,13 +212,13 @@ update_ants :: proc(state: ^GameState) {
 		spawn_type := AntType(random_type)
 
 		inventory[.Honey] -= AntValues[spawn_type].spawn_cost
-		spawn_ant(state, spawn_type)
+		spawn_ant(data, spawn_type)
 
 		// TODO: Move spawning of all entitys somewhere else 
-		spawn_enemy(state)
+		spawn_enemy(data)
 
-		time.stopwatch_reset(&state.timer)
-		time.stopwatch_start(&state.timer)
+		time.stopwatch_reset(&data.timer)
+		time.stopwatch_start(&data.timer)
 	}
 }
 
@@ -224,14 +227,14 @@ assign_ant_new_objective :: proc(ant: ^Ant, nest: Nest) {
 	ant.objective = new_ant_objective
 }
 
-draw_ants :: proc(state: GameState) {
-	for ant in state.ants {
+draw_ants :: proc(data: GameData) {
+	for ant in data.ants {
 		draw_ant(ant)
 
 		when ODIN_DEBUG {
 			if debug_overlay {
 				// Draw neighborhood 
-				neighborhood := get_neighborhood(ant, state)
+				neighborhood := get_neighborhood(ant, data)
 				defer delete(neighborhood)
 
 				for index in neighborhood {

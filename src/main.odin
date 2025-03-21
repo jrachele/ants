@@ -11,18 +11,12 @@ import "core:slice"
 import "core:time"
 import rl "vendor:raylib"
 
-WINDOW_WIDTH :: 1280
-WINDOW_HEIGHT :: 720
-
-CAMERA_MOVE_SPEED :: 400
-
 Stage :: enum {
 	Title,
 	Game,
 }
 
-GameState :: struct {
-	stage:   Stage,
+GameData :: struct {
 	grid:    Grid,
 	ants:    [dynamic]Ant,
 	enemies: [dynamic]Enemy,
@@ -31,25 +25,40 @@ GameState :: struct {
 	paused:  bool,
 }
 
+Fonts :: enum u16 {
+	SansSerif,
+	Serif,
+	Icon,
+	Bubble,
+}
+
+FONT_PATHS :: [Fonts]cstring {
+	.Bubble    = "assets/fonts/Jellee.ttf",
+	.SansSerif = "assets/fonts/Montreal.ttf",
+	.Serif     = "assets/fonts/Chanticleer.ttf",
+	.Icon      = "assets/fonts/FontAwesome.ttf",
+}
+
+Assets :: struct {
+	fonts: [Fonts]rl.Font,
+}
+
+// Constants 
+WINDOW_WIDTH :: 1280
+WINDOW_HEIGHT :: 720
+
+CAMERA_MOVE_SPEED :: 400
+
+// Globals
+assets: Assets
+camera: rl.Camera2D
+stage: Stage
+grid_target: rl.RenderTexture2D
+
 when ODIN_DEBUG {
 	debug_overlay := false
 }
 
-Fonts :: enum {
-	Emoji,
-	Serif,
-	SansSerif,
-}
-
-Assets :: struct {
-	fonts: [Fonts]^rl.Font,
-}
-
-ASSETS: Assets
-
-// Globals
-camera: rl.Camera2D
-grid_target: rl.RenderTexture2D
 
 main :: proc() {
 	when ODIN_DEBUG {
@@ -76,22 +85,24 @@ main :: proc() {
 
 	nest := init_nest()
 
-	state := GameState {
-		stage  = .Title,
+	data := GameData {
 		grid   = grid,
 		nest   = nest,
 		paused = false,
 	}
 
-	defer delete(state.ants)
-	defer delete(state.enemies)
+	defer delete(data.ants)
+	defer delete(data.enemies)
 
-	// Load assets
-	emoji_font := rl.LoadFont("assets/NotoEmoji-Regular.ttf")
-	ASSETS.fonts[.Emoji] = &emoji_font
+	// Load fonts
+	for font in Fonts {
+		paths := FONT_PATHS
+		font_data := rl.LoadFontEx(paths[font], 128, nil, 255)
+		assets.fonts[font] = font_data
+	}
 
 	clay_memory: [^]u8
-	init_hud(&clay_memory)
+	init_hud(&clay_memory, WINDOW_WIDTH, WINDOW_HEIGHT)
 	defer free(clay_memory)
 
 	camera.zoom = 1.0
@@ -141,59 +152,59 @@ main :: proc() {
 			camera.zoom = clamp(camera.zoom * scaleFactor, 0.125, 64.0)
 		}
 
-		update(&state)
-		draw(&state)
+		update(&data)
+		draw(&data)
 	}
 }
 
-update :: proc(state: ^GameState) {
-	switch (state.stage) {
+update :: proc(data: ^GameData) {
+	switch (stage) {
 	case .Title:
 		if rl.IsKeyPressed(.SPACE) {
-			start_game(state)
+			start_game(data)
 		}
 	case .Game:
 		if rl.IsKeyPressed(.SPACE) {
-			state.paused = !state.paused
+			data.paused = !data.paused
 		}
 		when ODIN_DEBUG {
 			if rl.IsKeyPressed(.O) {
 				debug_overlay = !debug_overlay
 			}
 		}
-		update_grid(state)
-		update_ants(state)
+		update_grid(data)
+		update_ants(data)
 		update_hud()
 	}
 }
 
-start_game :: proc(state: ^GameState) {
-	time.stopwatch_start(&state.timer)
-	state.stage = .Game
+start_game :: proc(data: ^GameData) {
+	time.stopwatch_start(&data.timer)
+	stage = .Game
 
 	// TODO: Set different levels, difficulties, etc. 
 
 	// For now, spawn 3 ants 
 	for _ in 0 ..< 3 {
-		spawn_ant(state, immediately = true)
+		spawn_ant(data, immediately = true)
 	}
 }
 
-draw :: proc(state: ^GameState) {
-	switch (state.stage) {
+draw :: proc(data: ^GameData) {
+	switch (stage) {
 	case .Title:
 		draw_title()
 	case .Game:
-		draw_game(state)
+		draw_game(data)
 
-		draw_hud(state^)
+		draw_hud(data^)
 	}
 }
 
 draw_title :: proc() {
 	rl.ClearBackground(rl.RAYWHITE)
 	draw_text_align(
-		rl.GetFontDefault(),
+		assets.fonts[.Bubble],
 		"ANTS!",
 		WINDOW_WIDTH / 2,
 		(WINDOW_HEIGHT / 2) - 40,
@@ -203,12 +214,12 @@ draw_title :: proc() {
 	)
 }
 
-draw_game :: proc(state: ^GameState) {
-	if draw_grid(state.grid) {
-		state.grid.dirty = false
-		state.grid.redraw_countdown = GRID_REFRESH_RATE
+draw_game :: proc(data: ^GameData) {
+	if draw_grid(data.grid) {
+		data.grid.dirty = false
+		data.grid.redraw_countdown = GRID_REFRESH_RATE
 	}
-	state.grid.redraw_countdown -= rl.GetFrameTime()
+	data.grid.redraw_countdown -= rl.GetFrameTime()
 
 	rl.ClearBackground(rl.BLACK)
 	rl.BeginMode2D(camera)
@@ -223,7 +234,7 @@ draw_game :: proc(state: ^GameState) {
 
 	// Draw the selected block 
 	// TODO: Move this someplace appropriate
-	selected_index := state.grid.selected_block_position
+	selected_index := data.grid.selected_block_position
 	if selected_index != INVALID_BLOCK_POSITION {
 		rl.DrawRectangleRoundedLines(
 			{
@@ -238,6 +249,6 @@ draw_game :: proc(state: ^GameState) {
 		)
 	}
 
-	draw_ants(state^)
-	draw_nest(state.nest)
+	draw_ants(data^)
+	draw_nest(data.nest)
 }

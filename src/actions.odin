@@ -117,9 +117,26 @@ Action_Wait :: struct {
 	remaining_time: f32,
 }
 
-// get_local_neighborhood :: proc(entity: Entity, grid: Grid) -> [9]EnvironmentType {
-// 	center_index := get_block_index(entity.pos)
-// }
+get_local_neighborhood :: proc(
+	entity: Entity,
+	grid: Grid,
+) -> (
+	local_neighborhood: [9]EnvironmentType,
+) {
+	block_position := to_block_position(entity.pos)
+	for i in 0 ..< 9 {
+		ox := i32(i % 3) - 1
+		oy := i32(i / 3) - 1
+		position := block_position + {ox, oy}
+		index := to_index(position)
+		if block, exists := get_block(grid, index); exists {
+			local_neighborhood[i] = block.type
+		} else {
+			local_neighborhood[i] = .Nothing
+		}
+	}
+	return
+}
 
 _walk :: proc(entity: ^Entity, walk_action: Action_Walk) -> bool {
 	using walk_action
@@ -130,7 +147,49 @@ _walk :: proc(entity: ^Entity, walk_action: Action_Walk) -> bool {
 		return true
 	}
 
-	point_entity_to(entity, walk_to)
+	entity.direction = rl.Vector2Normalize(walk_to - entity.pos)
+	velocity := rl.Vector2Normalize(entity.direction) * entity.speed
+
+	repellent_force: rl.Vector2
+	REPELLENT_STRENGTH :: 100
+	// Ensure we avoid collisions by being repelled by blocks in our local neighborhood 
+	local_neighborhood := get_local_neighborhood(entity^, environment^)
+	for i in 0 ..< 9 {
+		ox := i32(i % 3) - 1
+		oy := i32(i / 3) - 1
+
+		// Ignore the block the entity is on
+		if ox == 0 && oy == 0 do continue
+
+		block_type := local_neighborhood[i]
+		block_position := to_block_position(entity.pos) + {ox, oy}
+		world_position :=
+			to_world_position(block_position) + {GRID_CELL_SIZE / 2, GRID_CELL_SIZE / 2}
+		// Avoid impermeable blocks 
+		if !is_block_permeable(block_type) {
+			block_distance := rl.Vector2Distance(world_position, entity.pos)
+			if block_distance > 0 {
+				block_direction := rl.Vector2Normalize(entity.pos - world_position)
+				force := REPELLENT_STRENGTH / (block_distance * block_distance)
+				repellent_force += block_direction * force
+			}
+		}
+	}
+
+
+	dt := rl.GetFrameTime()
+	when ODIN_TEST {
+		dt = f32(1.0 / 60.0)
+	}
+	velocity = velocity + repellent_force
+	entity.direction = rl.Vector2Normalize(velocity)
+	entity.pos += velocity * dt
+
+	// If we haven't yet reached the destination, requeue the walk action
+	if rl.Vector2Distance(entity.pos, walk_to) >= 1 {
+		return queue_action(entity, walk_action)
+	}
+
 
 	// if is_blocked(entity^, environment^) {
 	// 	// The walking is incomplete, so push the current walk back onto the stack
@@ -156,16 +215,6 @@ _walk :: proc(entity: ^Entity, walk_action: Action_Walk) -> bool {
 	// 		{Action_Wait{remaining_time = get_random_value_f(0, 0.2)}, avoid_collision},
 	// 	)
 	// } else {
-	// 	dt := rl.GetFrameTime()
-	// 	when ODIN_TEST {
-	// 		dt = f32(1.0 / 60.0)
-	// 	}
-	// 	entity.pos += entity.direction * entity.speed * dt
-
-	// 	// If we haven't yet reached the destination, requeue the walk action
-	// 	if rl.Vector2Distance(entity.pos, walk_to) >= 1 {
-	// 		return queue_action(entity, walk_action)
-	// 	}
 	// }
 
 	return true
@@ -178,9 +227,6 @@ _wait :: proc(entity: ^Entity, wait_action: Action_Wait) {
 		dt = f32(1.0 / 60.0)
 	}
 	wait_action.remaining_time -= dt
-
-	// Have the entity fidget slightly 
-	wiggle_entity(entity)
 
 	// If we're still waiting, requeue the wait action with the new time
 	if wait_action.remaining_time > 0 {

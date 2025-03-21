@@ -37,11 +37,11 @@ init_enemy :: proc() -> (enemy: Enemy) {
 	return
 }
 
-spawn_enemy :: proc(state: ^GameState, immediately: bool = false) {
+spawn_enemy :: proc(data: ^GameData, immediately: bool = false) {
 	enemy := init_enemy()
 	if immediately {
 		enemy.life_time = 0
 	}
 
-	append(&state.enemies, enemy)
+	append(&data.enemies, enemy)
 }
