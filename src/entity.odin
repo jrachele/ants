@@ -6,8 +6,8 @@ import rl "vendor:raylib"
 ENTITY_ALPHA :: 200
 
 Entity :: struct {
-	pos:       rl.Vector2,
-	direction: rl.Vector2,
+	pos:       Vector2,
+	direction: Vector2,
 	// TODO: Consider dynamically allocating memory for the stack
 	actions:   Action_Stack,
 	speed:     f32,

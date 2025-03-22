@@ -119,6 +119,17 @@ draw_clay :: proc(data: GameData) {
 				backgroundColor = {0, 0, 0, 0},
 			},
 			) {
+				test_bool: bool
+				Button("Test!", &test_bool, "\uf164")
+
+				if (test_bool) {
+					fmt.printfln("Button pressed!")
+				}
+
+				test_f32: f32 = 20
+
+				Slider(&test_f32, 0, 40, "Test f32")
+
 				i: u32 = 0
 				for ant_type in AntType {
 					if ant_counts[ant_type] > 0 {
@@ -231,8 +242,8 @@ draw_hud :: proc(data: GameData) {
 
 	// Miscellaneous stuff that doesn't need clay
 	// Draw FPS 
-	fpsBuf: [100]u8
-	fps := fmt.bprintf(fpsBuf[:], "FPS: %v", rl.GetFPS())
-	draw_text_align(rl.GetFontDefault(), fps, WINDOW_WIDTH, 0, .Right, 20, rl.WHITE)
+	// fpsBuf: [100]u8
+	// fps := fmt.bprintf(fpsBuf[:], "FPS: %v", rl.GetFPS())
+	// draw_text_align(rl.GetFontDefault(), fps, WINDOW_WIDTH, 0, .Right, 20, rl.WHITE)
 
 }

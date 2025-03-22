@@ -112,7 +112,7 @@ init_ant :: proc(type: AntType, nest: Nest) -> (ant: Ant) {
 	ant_data := AntValues[type]
 	ant.pos = NEST_POS
 	// Initially, the ants can go wherever
-	ant.direction = rl.Vector2Normalize(get_random_vec(-1, 1))
+	ant.direction = vector2_normalize(get_random_vec(-1, 1))
 	ant.type = type
 	ant.health = ant_data.initial_health
 	ant.life_time = ant_data.initial_life
@@ -138,7 +138,7 @@ update_ants :: proc(data: ^GameData) {
 	for &ant in data.ants {
 		ant_data := AntValues[ant.type]
 		if ant.life_time < 0 do continue
-		ant.selected = rl.Vector2Distance(mouse_pos, ant.pos) < ant_data.size
+		ant.selected = vector2_distance(mouse_pos, ant.pos) < ant_data.size
 	}
 
 	if data.paused do return
@@ -176,7 +176,7 @@ update_ants :: proc(data: ^GameData) {
 					&ant,
 					Action_Walk {
 						environment = &data.grid,
-						walk_to = ant.pos + (rl.Vector2Rotate(ant.direction, offset) * distance),
+						walk_to = ant.pos + (vector2_rotate(ant.direction, offset) * distance),
 					},
 				)
 			}
@@ -325,14 +325,14 @@ draw_ant_data :: proc(ant: Ant) {
 	label_str := strings.to_string(sb)
 
 	// TODO: Get different font working 
-	draw_text_align(
-		rl.GetFontDefault(),
-		label_str,
-		i32(ant.pos.x),
-		i32(ant.pos.y),
-		.Center,
-		i32(ant_data.size),
-		rl.Color{0, 0, 0, 180},
-	)
+	// draw_text_align(
+	// 	rl.GetFontDefault(),
+	// 	label_str,
+	// 	i32(ant.pos.x),
+	// 	i32(ant.pos.y),
+	// 	.Center,
+	// 	i32(ant_data.size),
+	// 	rl.Color{0, 0, 0, 180},
+	// )
 
 }

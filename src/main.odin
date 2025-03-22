@@ -203,15 +203,15 @@ draw :: proc(data: ^GameData) {
 
 draw_title :: proc() {
 	rl.ClearBackground(rl.RAYWHITE)
-	draw_text_align(
-		assets.fonts[.Bubble],
-		"ANTS!",
-		WINDOW_WIDTH / 2,
-		(WINDOW_HEIGHT / 2) - 40,
-		.Center,
-		80,
-		rl.BLACK,
-	)
+	// draw_text_align(
+	// 	assets.fonts[.Bubble],
+	// 	"ANTS!",
+	// 	WINDOW_WIDTH / 2,
+	// 	(WINDOW_HEIGHT / 2) - 40,
+	// 	.Center,
+	// 	80,
+	// 	rl.BLACK,
+	// )
 }
 
 draw_game :: proc(data: ^GameData) {

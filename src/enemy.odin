@@ -28,8 +28,8 @@ init_enemy :: proc() -> (enemy: Enemy) {
 
 	// Generate the enemy position on a ring about the nest 
 	random_angle := get_random_value_f(0, math.PI * 2)
-	enemy.pos = rl.Vector2Rotate({ENEMY_SPAWN_RADIUS, 0}, random_angle) + NEST_POS
-	enemy.direction = rl.Vector2Normalize(NEST_POS - enemy.pos)
+	enemy.pos = vector2_rotate({ENEMY_SPAWN_RADIUS, 0}, random_angle) + NEST_POS
+	enemy.direction = vector2_normalize(NEST_POS - enemy.pos)
 	enemy.health = enemy_data.initial_health
 	enemy.life_time = enemy_data.initial_life
 	enemy.speed = enemy_data.initial_speed

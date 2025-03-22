@@ -1,67 +1,63 @@
 package ants
 
+import "base:intrinsics"
+import "core:math"
+import "core:math/rand"
 import "core:strings"
-import rl "vendor:raylib"
 
-Text_Alignment :: enum {
-	Left,
-	Center,
-	Right,
-}
-
-get_random_float :: proc(precision: u32 = 1000) -> f32 {
-	return f32(rl.GetRandomValue(0, i32(precision))) / f32(precision)
-}
+Vector2 :: [2]f32
 
 get_random_value_f :: proc(min, max: f32) -> f32 {
-	range := max - min
-	return (get_random_float() * range) + min
+	return rand.float32_range(min, max)
 }
 
-get_random_vec :: proc(min, max: f32) -> rl.Vector2 {
+get_random_vec :: proc(min, max: f32) -> Vector2 {
 	return {get_random_value_f(min, max), get_random_value_f(min, max)}
 }
 
 flip_coin :: proc() -> bool {
-	return rl.GetRandomValue(0, 1) == 0
+	return random_select([]bool{false, true})
 }
 
-draw_text_align :: proc(
-	font: rl.Font,
-	text: string,
-	x: i32,
-	y: i32,
-	alignment: Text_Alignment,
-	font_size: i32,
-	color: rl.Color,
-) {
-	font_size := f32(font_size)
-	x := f32(x)
-	y := f32(y)
-
-	text_cstr := strings.clone_to_cstring(text)
-	defer delete(text_cstr)
-
-	text_size := rl.MeasureTextEx(font, text_cstr, font_size, 0)
-	position := rl.Vector2{x, y}
-	switch (alignment) {
-	case .Left:
-	// Keep it the same
-	case .Center:
-		position -= text_size / 2
-	case .Right:
-		position -= text_size
-	}
-
-	rl.DrawTextEx(font, text_cstr, position, font_size, 0, color)
+random_select :: proc {
+	rand.choice_enum,
+	rand.choice,
 }
 
-
-random_select :: proc(possible_values: []$T) -> T {
-	if len(possible_values) == 0 {
-		panic("Random select on empty possible values")
+// Randomly select from a group, giving priority to the prioritized item
+// priority: (0, 1) where 0 is no priority at all, and 1 is full priority
+random_select_priority :: proc(priority: f32, prioritized_item: $T, remaining_items: []T) -> T {
+	roll := rand.float32()
+	if roll < priority {
+		return prioritized_item
+	} else {
+		return random_select(remaining_items)
 	}
+}
 
-	index := rl.GetRandomValue(0, i32(len(possible_values) - 1))
-	return possible_values[index]
+vector2_rotate :: proc(v: Vector2, rads: f32) -> Vector2 {
+	return {
+		v.x * math.cos(rads) - v.y * math.sin(rads),
+		v.x * math.sin(rads) + v.y * math.cos(rads),
+	}
+}
+
+vector2_distance_squared :: proc(v1: Vector2, v2: Vector2) -> f32 {
+	return (v2.x - v1.x) * (v2.x - v1.x) + (v2.y - v1.y) * (v2.y - v1.y)
+}
+
+vector2_distance :: proc(v1: Vector2, v2: Vector2) -> f32 {
+	return math.sqrt(vector2_distance_squared(v1, v2))
+}
+
+vector2_length :: proc(v1: Vector2) -> f32 {
+	return vector2_distance(v1, {0, 0})
+}
+
+vector2_normalize :: proc(v1: Vector2) -> Vector2 {
+	length := vector2_length(v1)
+	if length > 0 {
+		return v1 / length
+	}
+	return {}
 }

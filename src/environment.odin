@@ -29,14 +29,14 @@ find_item :: proc(
 	neighborhood: Neighborhood,
 	grid: Grid,
 	block_type: EnvironmentType,
-) -> rl.Vector2 {
+) -> Vector2 {
 	best_index: int = -1
 	best_distance: f32
 	for index in neighborhood {
 		block, _ := get_block_from_index(grid, index)
 		if block.type == block_type {
 			block_position := to_world_position(index)
-			block_distance := rl.Vector2Distance(ant.pos, block_position)
+			block_distance := vector2_distance(ant.pos, block_position)
 			if best_index == -1 || block_distance < best_distance {
 				best_index = index
 				best_distance = block_distance
@@ -58,7 +58,7 @@ find_most_pheromones :: proc(
 	neighborhood: Neighborhood,
 	grid: Grid,
 	pheromone: Pheromone,
-) -> rl.Vector2 {
+) -> Vector2 {
 	most_pheromones: f32 = 0
 	best_index: int = -1
 	for index in neighborhood {
@@ -95,7 +95,7 @@ get_neighborhood :: proc(
 
 	for i in 0 ..< DEFAULT_NUM_RAYS {
 		angle := f32(i) * (cone_degrees / DEFAULT_NUM_RAYS) - (cone_degrees / 2)
-		direction := rl.Vector2Normalize(rl.Vector2Rotate(ant.direction, math.to_radians(angle)))
+		direction := vector2_normalize(vector2_rotate(ant.direction, math.to_radians(angle)))
 
 		ray_position := ant.pos + (direction * RAY_INCREMENT)
 		distance: f32 = 0
@@ -111,7 +111,7 @@ get_neighborhood :: proc(
 					break
 				}
 			}
-			distance = rl.Vector2Distance(ant.pos, ray_position)
+			distance = vector2_distance(ant.pos, ray_position)
 			ray_position += (direction * RAY_INCREMENT)
 		}
 

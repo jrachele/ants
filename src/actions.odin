@@ -96,7 +96,7 @@ fmt_action :: proc(w: io.Writer, action: Action) -> int {
 
 Action_Walk :: struct {
 	environment: ^Grid,
-	walk_to:     rl.Vector2,
+	walk_to:     Vector2,
 }
 
 Action_Find :: struct {
@@ -143,14 +143,14 @@ _walk :: proc(entity: ^Entity, walk_action: Action_Walk) -> bool {
 
 	// TODO: Maybe store entity size as a variable
 	// Early out if we have reached our destination
-	if rl.Vector2Distance(entity.pos, walk_to) < 1 {
+	if vector2_distance(entity.pos, walk_to) < 1 {
 		return true
 	}
 
-	entity.direction = rl.Vector2Normalize(walk_to - entity.pos)
-	velocity := rl.Vector2Normalize(entity.direction) * entity.speed
+	entity.direction = vector2_normalize(walk_to - entity.pos)
+	velocity := vector2_normalize(entity.direction) * entity.speed
 
-	repellent_force: rl.Vector2
+	repellent_force: Vector2
 	REPELLENT_STRENGTH :: 100
 	// Ensure we avoid collisions by being repelled by blocks in our local neighborhood 
 	local_neighborhood := get_local_neighborhood(entity^, environment^)
@@ -167,9 +167,9 @@ _walk :: proc(entity: ^Entity, walk_action: Action_Walk) -> bool {
 			to_world_position(block_position) + {GRID_CELL_SIZE / 2, GRID_CELL_SIZE / 2}
 		// Avoid impermeable blocks 
 		if !is_block_permeable(block_type) {
-			block_distance := rl.Vector2Distance(world_position, entity.pos)
+			block_distance := vector2_distance(world_position, entity.pos)
 			if block_distance > 0 {
-				block_direction := rl.Vector2Normalize(entity.pos - world_position)
+				block_direction := vector2_normalize(entity.pos - world_position)
 				force := REPELLENT_STRENGTH / (block_distance * block_distance)
 				repellent_force += block_direction * force
 			}
@@ -182,11 +182,11 @@ _walk :: proc(entity: ^Entity, walk_action: Action_Walk) -> bool {
 		dt = f32(1.0 / 60.0)
 	}
 	velocity = velocity + repellent_force
-	entity.direction = rl.Vector2Normalize(velocity)
+	entity.direction = vector2_normalize(velocity)
 	entity.pos += velocity * dt
 
 	// If we haven't yet reached the destination, requeue the walk action
-	if rl.Vector2Distance(entity.pos, walk_to) >= 1 {
+	if vector2_distance(entity.pos, walk_to) >= 1 {
 		return queue_action(entity, walk_action)
 	}
 

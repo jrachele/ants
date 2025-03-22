@@ -63,7 +63,7 @@ get_block_ptr :: proc {
 
 get_block_ptr_from_world_position :: proc(
 	grid: ^Grid,
-	world_position: rl.Vector2,
+	world_position: Vector2,
 ) -> ^EnvironmentBlock {
 	block_position := get_block_position_from_world_position(world_position)
 	return get_block_ptr_from_block_position(grid, block_position)
@@ -96,7 +96,7 @@ get_block :: proc {
 
 get_block_from_world_position :: proc(
 	grid: Grid,
-	world_position: rl.Vector2,
+	world_position: Vector2,
 ) -> (
 	EnvironmentBlock,
 	bool,
@@ -139,12 +139,12 @@ to_index :: proc {
 	get_block_index_from_world_position,
 }
 
-get_block_position_from_world_position :: proc(world_position: rl.Vector2) -> [2]i32 {
+get_block_position_from_world_position :: proc(world_position: Vector2) -> [2]i32 {
 	world_position := world_position / GRID_CELL_SIZE
 	return {i32(world_position.x), i32(world_position.y)}
 }
 
-get_world_position_from_block_position :: proc(block_position: [2]i32) -> rl.Vector2 {
+get_world_position_from_block_position :: proc(block_position: [2]i32) -> Vector2 {
 	block_position := block_position * GRID_CELL_SIZE
 	return {f32(block_position.x), f32(block_position.y)}
 }
@@ -153,13 +153,13 @@ get_block_position_from_index :: proc(index: int) -> [2]i32 {
 	return {i32(index) % GRID_WIDTH, i32(index) / GRID_WIDTH}
 }
 
-get_world_position_from_index :: proc(index: int) -> rl.Vector2 {
+get_world_position_from_index :: proc(index: int) -> Vector2 {
 	block_position := get_block_position_from_index(index)
-	return rl.Vector2{f32(block_position.x), f32(block_position.y)} * GRID_CELL_SIZE
+	return Vector2{f32(block_position.x), f32(block_position.y)} * GRID_CELL_SIZE
 }
 
 
-get_block_index_from_world_position :: proc(world_position: rl.Vector2) -> int {
+get_block_index_from_world_position :: proc(world_position: Vector2) -> int {
 	block_position := get_block_position_from_world_position(world_position)
 	return get_block_index_from_block_position(block_position)
 }
@@ -193,20 +193,6 @@ get_selected_block_ptr :: proc(grid: ^Grid) -> ^EnvironmentBlock {
 	return get_block_ptr_from_block_position(grid, grid.selected_block_position)
 }
 
-choose_random_block :: proc() -> EnvironmentType {
-	choice := rl.GetRandomValue(0, 100)
-	sum: i32 = 0
-	for e in EnvironmentType {
-		if e == .Nothing do continue
-		sum += BlockDistribution[e]
-		if choice <= sum {
-			return e
-		}
-	}
-
-	return EnvironmentType.Nothing
-}
-
 init_grid :: proc(allocator := context.allocator) -> (grid: Grid) {
 	resize(&grid.data, GRID_WIDTH * GRID_HEIGHT)
 	for y in 0 ..< i32(GRID_HEIGHT) {
@@ -214,15 +200,15 @@ init_grid :: proc(allocator := context.allocator) -> (grid: Grid) {
 			index := get_block_index_from_block_position({x, y})
 			block := &grid.data[index]
 			// The nest should have no blocks, but lots of pheromones
-			if is_in_nest(x, y) {
+			if is_in_nest([2]i32{x, y}) {
 				block.pheromones[.General] = 100
 				block.type = .Nothing
 				block.amount = 0
 			} else {
-				block.type = choose_random_block()
+				block.type = random_select(EnvironmentType)
 				// For types that can be picked up, add a random amount 
 				if is_block_collectable(block.type) {
-					block.amount = f32(rl.GetRandomValue(1, 100))
+					block.amount = get_random_value_f(1, 100)
 				}
 			}
 
@@ -285,7 +271,7 @@ update_grid :: proc(data: ^GameData) {
 		for y in 0 ..< i32(GRID_HEIGHT) {
 			for x in 0 ..< i32(GRID_WIDTH) {
 				// Ignore all decay and diffusion on pheromones within the nest
-				if is_in_nest(x, y) do continue
+				if is_in_nest([2]i32{x, y}) do continue
 
 				index := get_block_index_from_block_position({x, y})
 				reference_block := grid_copy[index]
